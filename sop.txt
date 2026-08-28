@@ -1,0 +1,65 @@
+topic : privacy-preserving local interence 
+
+team members :
+	1) Unnati Manojkumar Hanchate 		(CS-5)		backend and ui 
+	2) Sushanth V Hegde  				(CS-5) 		backend
+	3) Ayshika Ray Sawarkar 			(CS-5) 		ui
+	4) Kodalli Varun Kumar 				(CS-5) 		backend
+	5) Shraddha Setty 					(CS-2) 		ui
+	6) Srijan Satya Bandaru 			(CS-5) 		backend
+	
+flow : 
+user browser-> screen capture -> local ViT(Vision Transformer) --> filter --> web request -> open weights LLM --> client executor like actions --> user browser
+
+keywords :
+	PII : Personally identifiable information 
+	DOM : document Objecgt Model --> programming interface for web doc , like ts or js
+	VLM : Vision-lang model--> ai model trained to understand and process both visual data and text
+	pipeline : sending output of one to input of the next
+
+SOP :
+
+Problem Statment ID :26171
+Problem statment title : on device visual preception for light-weight browser agents
+organization : ISRO
+project name : Project-Vision
+target :
+	according to SIH metric alignment , points distribution
+	visual accuracy (25%)
+	PII detectoin recall (20%)
+	redaction prcision (20%)
+	client resource usage (20%)
+	end to end latency (15%) 
+
+	we can compramise a bit on the latency.
+	
+summary : 
+	section 1: overview and core idea
+		A hybrid browser agent architecture that decouples UI execution from heavy reasonoing . A client-side chrome/ firefox extension using WebGPU to execute a quantized vision model locally , detexting and redacting sesitvie PII/DOM elements like paswords, identy fields , text inputs directly inside client memory . the sanitized, unidentifiable screenstate is then sent tto a backend VLm , ensuring zero sensitive data exposure over network boundaries.
+	session 2: architecture and techincal approach 
+		client side :
+			framework : plasmo / manifest V3 written in typescript
+			on-device hardware acceleration : we use webgpu api using onnx runtime web to access the user's gpu
+			redaction pipeline :  screen DOM and canvas layers pass though a local ViT/object detector . Detected PII coordiantes are painted with solid black bounding boxes / masks pior to netowkring serialization.
+
+		server side :
+			framework : fastapi with websockets for biderectional low latency streaming
+			cloud vlm : open weights vlm like qwen2-VL or llama 3.2 vision not sure about this part , is running on the inference server vLLM / ollama 
+			action protocol : interprets santizaed screen context and retuns ui action commands back to the client extension like click(x,y) or scroll(direction)
+	sesion 3: model and memory acclocation budget 
+		to keep the browser kind of lightweight we have to go under 2gb ram usage in normal activities
+		so for that 
+			1) baseline tab / browser		chromium V8		~500 MB
+			2) client model					onnx webgpu 	~250 MB
+			3) webgpu tensor buffers		vram / unified	~350 MB
+			4) DOM canvas / mash cache 		client memory 	~150 MB
+			5) safety margin 				headroom 		~750 MB
+		client model strat:
+			model selection : quantized mobileSAM (probably INT4) , fastViT or YOLOv8-Nano(ONNX)
+			optimization : using 4 bit or 8 bit quantizatoin limits model file size to 100 to 250MB preventing browser worker to crash and also is important to maintain sub-150mb local inference speeds
+	sesion 4: feasibilty & implementation 
+		phase 1 : client webgpu setup , implement manifest V4 extension in typescript or java script . load ONNX runtime web with webgpu provicer
+		phase 2 : redaction pipeline , building visual dectection + DOM regex filters to apply canvas masking over input fields and PII.
+		phase 3: server VLM & protocol , stand up fastapi server hosting open-weights vlm and establish websocket json action schema.
+		phase 4 : end to end integration , connect client execution engine to perfom automated ui actions based on server responses
+	

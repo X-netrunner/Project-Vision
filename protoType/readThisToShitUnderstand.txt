@@ -1,0 +1,20 @@
+Srijan : 
+	okay so first i init npm into my folder then follow it by initing typescript and chrome stuff using 'npm install -D typescript @types/chrome tsx' then use npx to init tsc
+	then i editted the tsconfig.json we get a default is in tsconfig.json.bak for backup if we mess it up 
+	now every chrom extension has a blueprint file called manifest.json it basically tells chrome what permissions your extension needs and which scripts to run. the data in that json should be self explainatory? idk the spelling
+		-> if you didn't get it or you are lazy to put it in llm -_- 
+			1) manifest_vesion : 3 is chome's current std for extension security
+			2) permissions : we declare what our extension can touch activieTab gives acces to the current web page and scripting lets your extension run code inside the web page
+
+	--> popup.html 
+	since we have action as popup.html we will write into it this is basically yk how you get that little windows that when you click on your extension icon in chrome ? 
+	**UI/UX team** if you see any .html or .css file thats your area 
+
+	-->src/popup.ts
+	1) fetch the button from popup.html
+		htmmlbuttonelect t
+		'HTMLButtonElement | null' — TypeScript makes sure we check if the element exists
+	2) we need to perform periodic checks so async , so all clicks are listened using this function
+	3) const [tab] = await line is getting currewnt activity on browser tab using chrome extension API wait i can steal info from users HEHEHE
+	4) sends msg to our background workers to perform the capture
+	5) the if continue of tab?.id exits before reading .id so it never crashed hopefully
