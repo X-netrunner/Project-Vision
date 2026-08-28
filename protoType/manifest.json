@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "ISRO On-Device Privacy Agent",
+  "name": "Project-Vision",
   "version": "1.0",
   "description": "Privacy-preserving visual agent running local PII redaction.",
   "permissions": [

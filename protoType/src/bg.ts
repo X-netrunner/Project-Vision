@@ -1,3 +1,5 @@
+console.log("[*] background worker active")
+
 interface PopupRequest {
 	action: "Start_Redact";
 	tabId: number;
@@ -18,8 +20,8 @@ async function captureAndRedact(tabId: number): Promise<void>{
 			quality: 90
 		});
 
-		console.log("[bg] Screenshot captured successfully");
-		console.log(`[bg] Base64 string length: ${dataUrl.length}`);
+		console.log("[background] Screenshot captured successfully");
+		console.log(`[background] Base64 string length: ${dataUrl.length}`);
 
 		await chrome.scripting.executeScript ({
 			target: { tabId: tabId},
@@ -31,6 +33,6 @@ async function captureAndRedact(tabId: number): Promise<void>{
 			imageUri : dataUrl
 		});
 	} catch (error) {
-		console.error("[bg] Failed to capture tab screenshot:",error);
+		console.error("[background] Failed to capture tab screenshot:",error);
 	}
 }

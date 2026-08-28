@@ -29,5 +29,17 @@ Srijan :
 			6)chrome.tabs.captureVisibleTab() the code extension api that captures whatever is visually rendered in the viewport right now and turns into a base64 data string
 				[!] if you don't know what is base64 string for it is a text format to represent binary data like pictures and what not in a specific set of 64 char  so its easily transfering store or embed in env that only accept texts
 			
-	--> src/content.ts
+	--> src/cs.ts
 		nothing much for now just that we listen to the image sent form bg.ts
+		But this is very important this is basically the code security guard script that runs directly inside the web page itself. 
+		the job is to listen for screenshots URI from the bg script find sensitive DOM elements like inputs and draw blackout masks over them using html canvas and esport a finalized "redacted" image.
+
+		[!!!!] shits very complicated and i know that cuz yes this is going to be hard ;-;
+
+		so active web page (DOM) => scan dom attributes pull coords out of it => receive screengrab imgaeuri then draw image onto canvas layer => final redaction loop draw black rectangles over all PII coords on canvas => export sanitized imageuri 
+			1) interface for message typing the imageuri is base64 jpeg captured by chrome.tabs.captureVisibleTab
+			2) main entry point listen for the image from bg.ts is the chrome.runtime.onMessage.addListener	fn
+			3) okay so phase 1 is detecting the PII using DOM hints
+			4) phase 2 we render and redact on canvas , HTMLCanvasElement confirms its a canvas
+			5) phase 3  export the finial safe image
+			6) phase 4 send it to backend server
