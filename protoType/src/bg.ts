@@ -7,7 +7,7 @@ interface PopupRequest {
 
 chrome.runtime.onMessage.addListener((message: PopupRequest, _sender, sendResponse) =>{
 	if ( message.action === "Start_Redact") {
-		console.log('[bg] starting screen cap for tab : ${message.tabId}');
+		console.log(`[bg] starting screen cap for tab : ${message.tabId}`);
 		captureAndRedact(message.tabId);
 		return true;
 	}
@@ -25,11 +25,11 @@ async function captureAndRedact(tabId: number): Promise<void>{
 
 		await chrome.scripting.executeScript ({
 			target: { tabId: tabId},
-			files: ["dist/content.js"]
+			files: ["dist/cs.js"]
 		});
 
 		chrome.tabs.sendMessage(tabId, {
-			actoin: "PROCESS_IMAGE",
+			action: "PROCESS_IMAGE",
 			imageUri : dataUrl
 		});
 	} catch (error) {

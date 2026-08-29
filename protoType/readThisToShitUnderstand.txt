@@ -43,3 +43,19 @@ Srijan :
 			4) phase 2 we render and redact on canvas , HTMLCanvasElement confirms its a canvas
 			5) phase 3  export the finial safe image
 			6) phase 4 send it to backend server
+			7) lets go into it now phase 1:
+				low resource usage (0.01s) , high precision (100% precision for passwords)
+				query common sesitive inputs using css selectors is const selectors = [] 
+
+				getBoundingClientRect() returns std coords relative to the viewport
+			8) phase 2 :
+				LOAD THER BASE64 image data into an httml image object which is cost img
+				we wait for the async image loading process which is await new Promise<void>
+				setup the canvas layer which is const canvas
+				const ctx  which is used type assestion as canvasrendereingcontext2D to enable context properties
+				set canvas resolution to match the input image precisly
+				draw the full screen snapshot as the base layer
+				draw redaction blocks over PII 
+				we use black blocks , we can swith with blur layers up to ui team
+				contract border for debugging visibility
+				coords from dom hints are already relative to the visual tab  which should align with capturevisibletab unless zoom is active

@@ -1,12 +1,12 @@
 topic : privacy-preserving local interence 
 
 team members :
-	1) Unnati Manojkumar Hanchate 		(CS-5)		backend and ui 
-	2) Sushanth V Hegde  				(CS-5) 		backend
-	3) Ayshika Ray Sawarkar 			(CS-5) 		ui
-	4) Kodalli Varun Kumar 				(CS-5) 		backend
-	5) Shraddha Setty 					(CS-2) 		ui
-	6) Srijan Satya Bandaru 			(CS-5) 		backend
+	1) Unnati Manojkumar Hanchate [Lead] 		(CS-5)		backend and ui 
+	2) Sushanth V Hegde  						(CS-5) 		backend
+	3) Ayshika Ray Sawarkar 					(CS-5) 		ui
+	4) Kodalli Varun Kumar 						(CS-5) 		backend
+	5) Shraddha Setty 							(CS-2) 		ui
+	6) Srijan Satya Bandaru 					(CS-5) 		backend & frontend
 	
 flow : 
 user browser-> screen capture -> local ViT(Vision Transformer) --> filter --> web request -> open weights LLM --> client executor like actions --> user browser

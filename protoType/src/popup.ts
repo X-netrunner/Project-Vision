@@ -7,6 +7,6 @@ captureBtn.addEventListener("click", async () => {
 
 	if ( tab?.id)
 	{
-		chrome.runtime.sendMessage({ action: "Start_Redac", tabId: tab.id});
+		chrome.runtime.sendMessage({ action: "Start_Redact", tabId: tab.id});
 	}
 })
