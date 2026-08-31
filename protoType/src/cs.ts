@@ -13,15 +13,18 @@ interface PiiCoord {
     label: string;
 }
 
-chrome.runtime.onMessage.addListener((message: ContentMessage) => {
+chrome.runtime.onMessage.addListener((message: ContentMessage, _sender, sendResponse) => {
     if (message.action === "PROCESS_IMAGE") {
         console.log("[*] Processing image inside content script");
         console.log(`[Content Script] Image size received: ${message.imageUri.length} chars`);
+        
+        // FIX 1: Pass message.imageUri directly
         redactScreenProcess(message.imageUri);
     }
+    return true;
 });
 
-async function redactScreenProcess(imageUri: string): Promise<void> {
+async function redactScreenProcess(imageUri: string): Promise<string | undefined> {
     try {
         // Phase 1: DOM Hints
         const piiCoords = detectPii();
@@ -32,13 +35,17 @@ async function redactScreenProcess(imageUri: string): Promise<void> {
 
         // Phase 3: Export Data URL
         const sanitizedUri = sanitizedCanvas.toDataURL("image/jpeg", 0.9);
-        console.log("[*] Redaction completed --> Data Length:", sanitizedUri.length);				
-		chrome.runtime.sendMessage({
-		  action: "[*] ReDACTION_COMPLETE",
-		  sanitizedUri: sanitizedUri
-		});
+        console.log("[*] Redaction completed --> Data Length:", sanitizedUri.length);               
+        
+        // FIX 2: Fixed action name to match bg.ts listener ("REDACTION_COMPLETE")
+        chrome.runtime.sendMessage({
+          action: "REDACTION_COMPLETE",
+          sanitizedUri: sanitizedUri
+        });
+        
         // Next step: send sanitizedUri to backend server
 
+        return sanitizedUri;
     } catch (error) {
         console.error("[!] Redaction failed", error);
     }

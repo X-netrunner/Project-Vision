@@ -6,9 +6,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         captureAndRedact(message.tabId);
         return true;
     }
-    if (message.action === "ReDACTION_COMPLETE") {
+    if (message.action === "REDACTION_COMPLETE") {
         chrome.runtime.sendMessage({
-            action: "SHOW_Prev",
+            action: "SHOW_PREVIEW",
             sanitizedUri: message.sanitizedUri
         });
     }

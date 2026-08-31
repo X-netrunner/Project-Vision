@@ -9,7 +9,8 @@ captureBtn.addEventListener("click", async () => {
     }
 });
 chrome.runtime.onMessage.addListener((message) => {
-    if (message.action === "SHOW_Prev") {
+    if (message.action === "SHOW_PREVIEW" && message.sanitizedUri) {
+        console.log("[*] Preview received in popup");
         previewImg.src = message.sanitizedUri;
         previewImg.style.display = "block";
     }

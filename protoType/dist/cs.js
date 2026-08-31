@@ -1,11 +1,13 @@
 "use strict";
 console.log("[*] Privacy Guard Active");
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.action === "PROCESS_IMAGE") {
         console.log("[*] Processing image inside content script");
         console.log(`[Content Script] Image size received: ${message.imageUri.length} chars`);
+        // FIX 1: Pass message.imageUri directly
         redactScreenProcess(message.imageUri);
     }
+    return true;
 });
 async function redactScreenProcess(imageUri) {
     try {
@@ -17,11 +19,13 @@ async function redactScreenProcess(imageUri) {
         // Phase 3: Export Data URL
         const sanitizedUri = sanitizedCanvas.toDataURL("image/jpeg", 0.9);
         console.log("[*] Redaction completed --> Data Length:", sanitizedUri.length);
+        // FIX 2: Fixed action name to match bg.ts listener ("REDACTION_COMPLETE")
         chrome.runtime.sendMessage({
-            action: "[*] ReDACTION_COMPLETE",
+            action: "REDACTION_COMPLETE",
             sanitizedUri: sanitizedUri
         });
         // Next step: send sanitizedUri to backend server
+        return sanitizedUri;
     }
     catch (error) {
         console.error("[!] Redaction failed", error);

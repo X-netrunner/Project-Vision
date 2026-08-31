@@ -6,7 +6,7 @@ interface StartRedactMessage {
 }
 
 interface RedactionCompleteMessage {
-	action: "ReDACTION_COMPLETE";
+	action: "REDACTION_COMPLETE";
 	sanitizedUri: string;
 }
 
@@ -19,9 +19,9 @@ chrome.runtime.onMessage.addListener((message: BackgroundIncomingMessage, _sende
 		return true;
 	}
 
-	if (message.action === "ReDACTION_COMPLETE") {
+	if (message.action === "REDACTION_COMPLETE") {
 		chrome.runtime.sendMessage({
-			action: "SHOW_Prev",
+			action: "SHOW_PREVIEW",
 			sanitizedUri: message.sanitizedUri
 		});
 	}
