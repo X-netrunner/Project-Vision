@@ -6,6 +6,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         captureAndRedact(message.tabId);
         return true;
     }
+    if (message.action === "ReDACTION_COMPLETE") {
+        chrome.runtime.sendMessage({
+            action: "SHOW_Prev",
+            sanitizedUri: message.sanitizedUri
+        });
+    }
 });
 async function captureAndRedact(tabId) {
     try {

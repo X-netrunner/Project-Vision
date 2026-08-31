@@ -59,3 +59,23 @@ Srijan :
 				we use black blocks , we can swith with blur layers up to ui team
 				contract border for debugging visibility
 				coords from dom hints are already relative to the visual tab  which should align with capturevisibletab unless zoom is active
+
+		-->popup.html
+			we now display the sanitized image in my extension popup 
+			honestly nothing much we are going to update our popup.ts so cs.txt can send the redacted image strings back though bg.ts to popup.ts
+
+		-->cs.ts
+			we added
+			const sanitizedUri = sanitizedCanvas.toDataURL("image/jpeg", 0.9);
+			console.log("[*] Redaction completed --> Data Length:", sanitizedUri.length);			
+			chrome.runtime.sendMessage({
+			  action: "[*] ReDACTION_COMPLETE",
+			  sanitizedUri: sanitizedUri
+			});
+			nothing much we forewad the image back to backrgound worker thats it
+
+		-->bg.ts
+			we just added a if block in onMessage saying if ther actoin is redaction_complete then we show preview
+
+		-->popup.ts
+			we added a onMessage lsiteneer .

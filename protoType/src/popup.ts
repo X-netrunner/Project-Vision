@@ -1,7 +1,8 @@
 const captureBtn = document.getElementById("captureBtn") as HTMLButtonElement;
+const previewImg = document.getElementById("preview") as HTMLImageElement;
 
 captureBtn.addEventListener("click", async () => {
-	console.log("Button clicked! Requesting active tab screenshot...");
+	console.log("[*] Button clicked! Requesting active tab screenshot...");
 
 	const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
@@ -9,4 +10,11 @@ captureBtn.addEventListener("click", async () => {
 	{
 		chrome.runtime.sendMessage({ action: "Start_Redact", tabId: tab.id});
 	}
-})
+});
+
+chrome.runtime.onMessage.addListener((message) => {
+	if (message.action === "SHOW_Prev") {
+		previewImg.src = message.sanitizedUri;
+		previewImg.style.display = "block";
+	}
+});

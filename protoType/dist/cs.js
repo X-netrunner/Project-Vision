@@ -17,6 +17,10 @@ async function redactScreenProcess(imageUri) {
         // Phase 3: Export Data URL
         const sanitizedUri = sanitizedCanvas.toDataURL("image/jpeg", 0.9);
         console.log("[*] Redaction completed --> Data Length:", sanitizedUri.length);
+        chrome.runtime.sendMessage({
+            action: "[*] ReDACTION_COMPLETE",
+            sanitizedUri: sanitizedUri
+        });
         // Next step: send sanitizedUri to backend server
     }
     catch (error) {
