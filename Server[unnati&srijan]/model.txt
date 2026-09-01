@@ -1,0 +1,26 @@
+for a 3b model :
+	==> Give a prompt :research about the ps4 controller and tell me its working
+	[*] Testing Planner LLM...
+	[*] Generate Plan ['Open browser and go to a search engine website like Google', "Type 'ps4 controller' into the search bar and press enter to find related search results"]
+
+	==> Give a prompt :check the price history of 1tb ssd from 2018 to 2026
+	[*] Testing Planner LLM...
+	[*] Generate Plan ['Go to a popular e-commerce website like Amazon or Newegg', "Search for '1TB SSD' in the search bar", 'Filter results to show only products from 2018 to 2026', 'Sort the results by date to see the price history', 'Note down the price history for 1TB SSD']
+
+for a 8b model :
+	==> Give a prompt :Give a prompt :research about the ps4 controller and tell me its working
+	[*] Testing Planner LLM...
+	[*] Generate Plan ['Open a web browser and navigate to a search engine (e.g., Google).', "Search for 'PS4 controller working mechanism and features' and review the top results for accurate information."]
+
+	==>Give a prompt :Give a prompt :check the price history of 1tb ssd from 2018 to 2026
+	[*] Testing Planner LLM...
+	[*] Generate Plan ['Open a web browser and navigate to a search engine (e.g., Google).', "Search for '1tb ssd price history 2018 2026' and visit a reliable price tracking website (e.g., PriceHistory.com, Google Trends, or a tech product price database)."]
+
+for a 7b model :
+	==> Give a prompt :research about the ps4 controller and tell me its working
+	[*] Testing Planner LLM...
+	[*] Generate Plan ["Search for 'ps4 controller specifications' on a search engine like Google", 'Visit the first few results to read about its working features']
+
+	==> Give a prompt :Give a prompt :check the price history of 1tb ssd from 2018 to 2026
+	[*] Testing Planner LLM...
+	[*] Generate Plan ['Visit an electronics or tech price history website or database', "Search for '1TB SSD price history from 2018 to 2026'"]

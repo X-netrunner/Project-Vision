@@ -1,0 +1,17 @@
+Srijan -->
+	we need fasatapi for server framework
+    we need uvicorn to run it
+    we need websockets to handle the cntinous connection
+    we need ollama which is our local llm hoster
+
+	run
+	'''
+		pip install fastapi uvicorn websockets ollama	
+	'''
+
+	main.py -->
+		the app = something is basically to initiialized the server
+		the @app.web whatever was to tell the fastapi that any request coming to ws://localhost:8000/ws should be handled as a contonious websocket stream,not a std web page load which is like a one night stand
+		async and await becassue the network requests take time  and our python code needs to pause adn wait for msg without freezing the rest of the code 
+		the  loop this is technically the heartbeat of the our agent onced the conneciton opens the loops runs forever , constantly listening fro the next json payload.
+		
