@@ -19,8 +19,8 @@ def createPlan(user_prompt: str) -> list:
 
     response = ollama.chat(
         #model ="qwen2.5:3b-instruct",
-        #model = "qwen3:8b",
-        model = "qwen2.5:7b-instruct-q4_K_M",
+        model = "qwen3:8b",
+        #model = "qwen2.5:7b-instruct-q4_K_M",
         messages=[{"role": "user", "content": plannerPrompt}],
         format="json" #trying to force it to use a json hope it works
     )
@@ -34,18 +34,34 @@ app = FastAPI() #initialize the server
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     #accept the incomming connection from sushanth
-    await websocket.accpet()
+    await websocket.accept()
     print("[*] Connection established with Sushanth")
     try:
         while True: #we want the connecion to be open forever so we will make a inf loop
             #we wait for the msg to come if it does
-            raw_data = await websocket.receive_text()
-            message = json.loads(raw_data) 
-            print("[*] Recived msg :", message)
+            rawData = await websocket.receive_text()
+            userPrompt = rawData.strip()
+            print("[*] Recived prompt :", userPrompt)
 
+            if not userPrompt :
+                continue
+            taskPlan = createPlan(userPrompt)
+            print(f"[*] Task plan generated ({len(taskPlan)} steps):")
             #lets check if we can send a message back for now
-            test_resp = {"status" : "Message received"}
-            await websocket.send_text(json.dumps(test_resp))
+
+            for i,step in enumerate(taskPlan):
+                print(f"\t Step {i+1}: {step}")
+
+            responsePayload = {
+                "type" : "REQUEST_SS",
+                "payload": {
+                    "current_step" : taskPlan[0],
+                    "step_index" : 0,
+                    "total_steps" : len(taskPlan)
+                }
+            }
+            await websocket.send_text(json.dumps(responsePayload))
+            print("[*] Request ss for step 1: " , taskPlan[0])
     except WebSocketDisconnect:
         print("[!] Extension disconnected")
 
