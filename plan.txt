@@ -1,0 +1,24 @@
+plan :
+	user open browser
+	user type in a prompt in the extension on what to do
+	extension sends that to server
+	server be like hmmmmmmm and decides on how to do it
+	server ask to extension to send screenshot of the browser 
+	extension take screenshot 
+	ss will be redacted and processed by neurl network
+	that will be converted to base64 strings and sent to server
+	serve conver it back 
+	send that img to a model and get all the information out of it like which is where
+	sends that to browser on how much distance it has to be move 
+	extension move 
+	repeat till task is done 
+
+core :
+	ui and ux --> shraddha and ayshika
+	neurl network --> varun
+	extension --> sushanth
+	server --> me
+
+	unnati allrounder :)
+
+	

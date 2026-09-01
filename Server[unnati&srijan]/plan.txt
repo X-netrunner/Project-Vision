@@ -1,0 +1,14 @@
+Phase 1: Planning (Text LLM)
+    Receive (api) user prompt from the extension.
+    Pass prompt to qwen2.5:3b-instruct (Planner) to output an array of action steps (e.g., ["Find search bar", "Type laptop", "Click search"]).
+    Request the sanitized screenshot from Sushanth for Step 1.
+
+Phase 2: Visual Grounding & Action Decision (Vision Model / VLM)
+    Receive the sanitized base64 image from Sushanth.
+    Pass both the image AND the current step description directly to qwen2.5vl:3b (Actor).
+    The VLM identifies the target element on the screen and outputs the action and coordinates in one single pass (e.g., {"action": "click", "x": 420, "y": 180}).
+
+Phase 3: Action Execution (API / WebSocket to Extension)
+    Transmit the JSON action payload back over the WebSocket to Sushanth's extension script.
+    Sushanth's script executes the DOM action (click, type, or scroll).
+    If more steps remain in the plan, loop back to Phase 2 for the next step.
