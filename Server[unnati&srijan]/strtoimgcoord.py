@@ -14,7 +14,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Load the pretrained Qwen2-VL model into GPU memory using float16 precision to fit within VRAM constraints (4GB–6GB)
 model = Qwen2VLForConditionalGeneration.from_pretrained(
-    MODEL_ID, torch_dtype=torch.float16, device_map="auto"
+    MODEL_ID, torch_dtype=torch.float16 if device == "cuda" else torch.float32, device_map="auto"
 )
 
 # Load the matching processor, which handles text tokenization and visual image transformations
@@ -95,15 +95,28 @@ def predict_action(
         # Scale normalized 0-1000 coordinates to actual pixel dimensions of the browser window
         target_x = int(((xmin + xmax) / 2 / 1000) * width)
         target_y = int(((ymin + ymax) / 2 / 1000) * height)
+        
+    # Dynamically extract action type from step prefix
+    action_type = "click"
+    if current_step.startswith("TYPE:"):
+        action_type = "type"
+    elif current_step.startswith("NAVIGATE:"):
+        action_type = "navigate"
+    elif current_step.startswith("PRESS:"):
+        action_type = "press"
+        
+    clean_text = current_step
+    for prefix in ["CLICK:", "TYPE:", "NAVIGATE:", "PRESS:"]:
+        clean_text = clean_text.replace(prefix, "").strip()
 
     # Step 6: Construct and return the structured JSON payload matching the extension API protocol
     return {
         "type": "ACTION_COORDINATES",
         "payload": {
-            "action": "click",
+            "action": action_type,
             "x": target_x,
             "y": target_y,
-            "text": current_step.replace("CLICK: ", ""),
+            "text": clean_text,
             "step_index": step_index,
             "is_last_step": is_last_step,
         },
