@@ -1,42 +1,113 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Project Vision</title>
-  <style>
-    body {
-      width: 320px;
-      padding: 15px;
-      font-family: system-ui, sans-serif;
-      background: #1e1e2e;
-      color: #cdd6f4;
-      text-align: center;
-    }
-    button {
-      width: 100%;
-      padding: 10px;
-      background: #89b4fa;
-      color: #11111b;
-      border: none;
-      border-radius: 6px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    button:hover { background: #b4befe; }
-    #preview {
-      width: 100%;
-      margin-top: 15px;
-      border-radius: 6px;
-      border: 1px solid #45475a;
-      display: none;
-    }
-  </style>
-</head>
-<body>
-  <h3>Project Vision</h3>
-  <button id="captureBtn">Sanitize Screen</button>
-  <img id="preview" alt="Sanitized Preview" />
+    <meta charset="UTF-8">
+    <title>Project Vision</title>
 
-  <script src="dist/popup.js"></script>
+    <style>
+        body {
+            width: 340px;
+            padding: 15px;
+            margin: 0;
+            font-family: system-ui, sans-serif;
+            background: #1e1e2e;
+            color: #cdd6f4;
+        }
+
+        h3 {
+            text-align: center;
+            margin-top: 0;
+        }
+
+        button {
+            width: 100%;
+            padding: 9px;
+            margin-top: 7px;
+            background: #89b4fa;
+            color: #11111b;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #b4befe;
+        }
+
+        #status {
+            margin-top: 12px;
+            padding: 8px;
+            border-radius: 6px;
+            background: #313244;
+            font-size: 12px;
+            word-break: break-word;
+        }
+
+        #preview {
+            width: 100%;
+            margin-top: 15px;
+            border-radius: 6px;
+            border: 1px solid #45475a;
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h3>Project Vision</h3>
+
+    <button id="captureBtn">
+        Sanitize Screen
+    </button>
+
+    <button id="testOpenTab">
+        Test Open DuckDuckGo Tab
+    </button>
+
+    <button id="testSearch">
+        Test DuckDuckGo Search
+    </button>
+
+    <button id="testNavigate">
+        Test Navigate
+    </button>
+
+    <button id="testClick">
+        Test Click
+    </button>
+
+    <button id="testType">
+        Test Type
+    </button>
+
+    <button id="testEnter">
+        Test Press Enter
+    </button>
+
+    <button id="testScrollDown">
+        Test Scroll Down
+    </button>
+
+    <button id="testScrollUp">
+        Test Scroll Up
+    </button>
+
+    <button id="testInvalid">
+        Test Invalid Action
+    </button>
+
+    <div id="status">
+        Ready
+    </div>
+
+    <img
+        id="preview"
+        alt="Sanitized Preview"
+    >
+
+    <script src="dist/popup.js"></script>
+
 </body>
 </html>
