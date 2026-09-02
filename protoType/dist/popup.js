@@ -1,143 +1,181 @@
-"use strict";
-const captureBtn = document.getElementById("captureBtn");
-const testClick = document.getElementById("testClick");
-const testType = document.getElementById("testType");
-const testEnter = document.getElementById("testEnter");
-const testScrollDown = document.getElementById("testScrollDown");
-const testScrollUp = document.getElementById("testScrollUp");
-const testOpenTab = document.getElementById("testOpenTab");
-const testSearch = document.getElementById("testSearch");
-const testNavigate = document.getElementById("testNavigate");
-const testInvalid = document.getElementById("testInvalid");
-const previewImg = document.getElementById("preview");
 const statusBox = document.getElementById("status");
-async function getActiveTab() {
+const startButton = document.getElementById("start");
+const demoButton = document.getElementById("demo");
+const screenshotButton = document.getElementById("screenshot");
+const clickButton = document.getElementById("click");
+const typeButton = document.getElementById("type");
+const enterButton = document.getElementById("enter");
+const scrollButton = document.getElementById("scroll");
+function setStatus(message) {
+    if (statusBox) {
+        statusBox.textContent =
+            message;
+    }
+}
+async function getActiveTabId() {
     const tabs = await chrome.tabs.query({
         active: true,
         currentWindow: true
     });
-    return tabs[0];
-}
-function showStatus(text) {
-    statusBox.textContent =
-        text;
-}
-function sendAction(payload) {
-    chrome.runtime.sendMessage({
-        type: "ACTION_COORDINATES",
-        request_id: `test-${Date.now()}`,
-        action_id: `test-${Date.now()}`,
-        payload
-    });
-}
-captureBtn.addEventListener("click", async () => {
-    const tab = await getActiveTab();
-    if (!tab?.id) {
-        showStatus("No active tab");
-        return;
+    if (!tabs[0] ||
+        typeof tabs[0].id !==
+            "number") {
+        throw new Error("No active tab");
     }
-    showStatus("Capturing...");
-    chrome.runtime.sendMessage({
-        action: "Start_Redact",
-        tabId: tab.id
+    return tabs[0].id;
+}
+async function sendDemoAction(action) {
+    const response = await chrome.runtime.sendMessage({
+        type: "DEMO_ACTION",
+        action
     });
-});
-testClick.addEventListener("click", () => {
-    sendAction({
-        action: "click",
-        x: 825,
-        y: 360,
-        step_index: 0,
-        is_last_step: true
-    });
-});
-testType.addEventListener("click", () => {
-    sendAction({
-        action: "type",
-        x: 825,
-        y: 360,
-        text: "PS4 controller",
-        step_index: 0,
-        is_last_step: true
-    });
-});
-testEnter.addEventListener("click", () => {
-    sendAction({
-        action: "press",
-        key: "Enter",
-        step_index: 0,
-        is_last_step: true
-    });
-});
-testScrollDown.addEventListener("click", () => {
-    sendAction({
-        action: "scroll",
-        direction: "down",
-        amount: 500,
-        step_index: 0,
-        is_last_step: true
-    });
-});
-testScrollUp.addEventListener("click", () => {
-    sendAction({
-        action: "scroll",
-        direction: "up",
-        amount: 500,
-        step_index: 0,
-        is_last_step: true
-    });
-});
-testOpenTab.addEventListener("click", () => {
-    sendAction({
-        action: "open_tab",
-        url: "https://duckduckgo.com/",
-        step_index: 0,
-        is_last_step: true
-    });
-});
-testSearch.addEventListener("click", () => {
-    sendAction({
-        action: "search",
-        query: "PS4 controller",
-        step_index: 0,
-        is_last_step: true
-    });
-});
-testNavigate.addEventListener("click", () => {
-    sendAction({
-        action: "navigate",
-        url: "https://duckduckgo.com/",
-        step_index: 0,
-        is_last_step: true
-    });
-});
-testInvalid.addEventListener("click", () => {
-    sendAction({
-        action: "invalid_action",
-        step_index: 0,
-        is_last_step: true
-    });
-});
-chrome.runtime.onMessage.addListener((message) => {
-    if ("action" in message &&
-        message.action ===
-            "SHOW_PREVIEW") {
-        previewImg.src =
-            message.sanitizedUri;
-        previewImg.style.display =
-            "block";
-        showStatus("Sanitized screenshot received");
-        return;
+    if (!response?.success) {
+        throw new Error(response?.error ??
+            "Demo action failed");
     }
-    if ("type" in message &&
-        message.type ===
-            "ACTION_RESULT") {
-        const result = message.payload;
-        if (result.success) {
-            showStatus(`[SUCCESS] ${result.action} | Step ${result.step_index}`);
+}
+if (startButton) {
+    startButton.addEventListener("click", async () => {
+        setStatus("Starting local screenshot test...");
+        try {
+            const response = await chrome.runtime.sendMessage({
+                type: "START_AGENT"
+            });
+            if (response?.success) {
+                setStatus("Screenshot sent to Varun. WebSocket must be running for this test.");
+            }
+            else {
+                setStatus(response?.error ??
+                    "Failed to start.");
+            }
         }
-        else {
-            showStatus(`[FAILED] ${result.action} | Step ${result.step_index} | ${result.error}`);
+        catch (error) {
+            setStatus(error instanceof Error
+                ? error.message
+                : String(error));
         }
-    }
-});
+    });
+}
+if (demoButton) {
+    demoButton.addEventListener("click", async () => {
+        setStatus("Running local example...");
+        try {
+            const tabId = await getActiveTabId();
+            const openAction = {
+                action: "open_tab",
+                url: "https://www.google.com",
+                step_index: 0,
+                is_last_step: true
+            };
+            await sendDemoAction(openAction);
+            setStatus(`Example command sent for tab ${tabId}.`);
+        }
+        catch (error) {
+            setStatus(error instanceof Error
+                ? error.message
+                : String(error));
+        }
+    });
+}
+if (screenshotButton) {
+    screenshotButton.addEventListener("click", async () => {
+        setStatus("Testing screenshot capture...");
+        try {
+            const response = await chrome.runtime.sendMessage({
+                type: "LOCAL_SCREENSHOT_TEST"
+            });
+            if (response?.success) {
+                setStatus(`Screenshot OK. Base64 length: ${response.length}`);
+            }
+            else {
+                setStatus(response?.error ??
+                    "Screenshot failed.");
+            }
+        }
+        catch (error) {
+            setStatus(error instanceof Error
+                ? error.message
+                : String(error));
+        }
+    });
+}
+if (clickButton) {
+    clickButton.addEventListener("click", async () => {
+        setStatus("Sending local click test...");
+        try {
+            await sendDemoAction({
+                action: "click",
+                x: 825,
+                y: 360,
+                step_index: 0,
+                is_last_step: true
+            });
+            setStatus("Click command executed.");
+        }
+        catch (error) {
+            setStatus(error instanceof Error
+                ? error.message
+                : String(error));
+        }
+    });
+}
+if (typeButton) {
+    typeButton.addEventListener("click", async () => {
+        setStatus("Sending local type test...");
+        try {
+            await sendDemoAction({
+                action: "type",
+                text: "ISRO",
+                step_index: 0,
+                is_last_step: true
+            });
+            setStatus("Type command executed.");
+        }
+        catch (error) {
+            setStatus(error instanceof Error
+                ? error.message
+                : String(error));
+        }
+    });
+}
+if (enterButton) {
+    enterButton.addEventListener("click", async () => {
+        setStatus("Sending Enter test...");
+        try {
+            await sendDemoAction({
+                action: "press",
+                key: "Enter",
+                step_index: 0,
+                is_last_step: true
+            });
+            setStatus("Enter command executed.");
+        }
+        catch (error) {
+            setStatus(error instanceof Error
+                ? error.message
+                : String(error));
+        }
+    });
+}
+if (scrollButton) {
+    scrollButton.addEventListener("click", async () => {
+        setStatus("Sending scroll test...");
+        try {
+            await sendDemoAction({
+                action: "scroll",
+                direction: "down",
+                amount: 500,
+                step_index: 0,
+                is_last_step: true
+            });
+            setStatus("Scroll command executed.");
+        }
+        catch (error) {
+            setStatus(error instanceof Error
+                ? error.message
+                : String(error));
+        }
+    });
+}
+setStatus("Ready for local testing.");
+export {};

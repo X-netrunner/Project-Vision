@@ -1,801 +1,511 @@
 (() => {
-    const globalState =
-        globalThis as typeof globalThis & {
-            __projectVisionContentScriptLoaded?: boolean;
-        };
+  const globalState =
+    globalThis as typeof globalThis & {
+      __projectVisionContentScriptLoaded?: boolean;
+    };
+
+  if (
+    globalState.__projectVisionContentScriptLoaded
+  ) {
+    return;
+  }
+
+  globalState.__projectVisionContentScriptLoaded =
+    true;
+
+  interface ActionPayload {
+    action:
+      | "click"
+      | "type"
+      | "press"
+      | "scroll"
+      | "open_tab"
+      | "navigate"
+      | "search"
+      | "close_tab"
+      | "switch_tab";
+
+    x?: number;
+    y?: number;
+
+    text?: string;
+    key?: string;
+
+    direction?: "up" | "down";
+    amount?: number;
+
+    url?: string;
+    query?: string;
+    tab_id?: number;
+
+    step_index: number;
+    is_last_step: boolean;
+  }
+
+  interface ActionMessage {
+    type: "AGENT_ACTION";
+    action: ActionPayload;
+  }
+
+  interface PingMessage {
+    type: "PING";
+  }
+
+  type IncomingMessage =
+    | ActionMessage
+    | PingMessage;
+
+  function isPingMessage(
+    message: IncomingMessage
+  ): message is PingMessage {
+    return message.type === "PING";
+  }
+
+  function isActionMessage(
+    message: IncomingMessage
+  ): message is ActionMessage {
+    return (
+      message.type ===
+      "AGENT_ACTION"
+    );
+  }
+
+  function findElementAt(
+    x: number,
+    y: number
+  ): HTMLElement | null {
+    const element =
+      document.elementFromPoint(
+        x,
+        y
+      );
+
+    return element instanceof
+      HTMLElement
+      ? element
+      : null;
+  }
+
+  function findClickableElement(
+    element: HTMLElement
+  ): HTMLElement {
+    const clickable =
+      element.closest(
+        "button, a, input, textarea, select, [role='button'], [role='link'], [onclick]"
+      );
+
+    return clickable instanceof
+      HTMLElement
+      ? clickable
+      : element;
+  }
+
+  function setInputValue(
+    element:
+      | HTMLInputElement
+      | HTMLTextAreaElement,
+    value: string
+  ): void {
+    const prototype =
+      element instanceof
+      HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype;
+
+    const descriptor =
+      Object.getOwnPropertyDescriptor(
+        prototype,
+        "value"
+      );
+
+    if (descriptor?.set) {
+      descriptor.set.call(
+        element,
+        value
+      );
+    } else {
+      element.value = value;
+    }
+
+    element.dispatchEvent(
+      new Event("input", {
+        bubbles: true,
+        composed: true
+      })
+    );
+
+    element.dispatchEvent(
+      new Event("change", {
+        bubbles: true,
+        composed: true
+      })
+    );
+  }
+
+  function findTextInput(): HTMLElement | null {
+    const active =
+      document.activeElement;
 
     if (
-        globalState.__projectVisionContentScriptLoaded
+      active instanceof
+        HTMLInputElement ||
+      active instanceof
+        HTMLTextAreaElement ||
+      (
+        active instanceof
+          HTMLElement &&
+        active.isContentEditable
+      )
     ) {
-        console.log(
-            "[CS] Already loaded"
-        );
-        return;
+      return active;
     }
 
-    globalState.__projectVisionContentScriptLoaded =
-        true;
+    const selectors = [
+      "input[type='search']",
+      "input[type='text']",
+      "textarea[name='q']",
+      "textarea[aria-label*='Search' i]",
+      "input[name='q']",
+      "input[aria-label*='Search' i]",
+      "textarea",
+      "input:not([type='hidden'])"
+    ];
 
-    console.log(
-        "[*] Privacy Guard Active"
+    for (
+      const selector of selectors
+    ) {
+      const element =
+        document.querySelector(
+          selector
+        );
+
+      if (
+        element instanceof
+        HTMLElement
+      ) {
+        return element;
+      }
+    }
+
+    return null;
+  }
+
+  function performClick(
+    x: number,
+    y: number
+  ): void {
+    const element =
+      findElementAt(x, y);
+
+    if (!element) {
+      throw new Error(
+        `No element found at (${x}, ${y})`
+      );
+    }
+
+    const clickable =
+      findClickableElement(
+        element
+      );
+
+    clickable.scrollIntoView({
+      block: "center",
+      inline: "center"
+    });
+
+    clickable.click();
+  }
+
+  function performType(
+    text: string,
+    x?: number,
+    y?: number
+  ): void {
+    let element:
+      | HTMLElement
+      | null = null;
+
+    if (
+      typeof x === "number" &&
+      typeof y === "number"
+    ) {
+      element =
+        findElementAt(x, y);
+    }
+
+    if (!element) {
+      element =
+        findTextInput();
+    }
+
+    if (!element) {
+      throw new Error(
+        "No input element found"
+      );
+    }
+
+    if (
+      element instanceof
+        HTMLInputElement ||
+      element instanceof
+        HTMLTextAreaElement
+    ) {
+      element.focus();
+
+      setInputValue(
+        element,
+        text
+      );
+
+      return;
+    }
+
+    if (
+      element.isContentEditable
+    ) {
+      element.focus();
+
+      element.textContent =
+        text;
+
+      element.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType:
+            "insertText",
+          data: text
+        })
+      );
+
+      return;
+    }
+
+    throw new Error(
+      "Element is not a text input"
+    );
+  }
+
+  function performPress(
+    key: string
+  ): void {
+    const target =
+      document.activeElement instanceof
+      HTMLElement
+        ? document.activeElement
+        : document.body;
+
+    target.dispatchEvent(
+      new KeyboardEvent(
+        "keydown",
+        {
+          key,
+          code: key,
+          bubbles: true,
+          cancelable: true
+        }
+      )
     );
 
-    type BrowserAction =
-        | "click"
-        | "type"
-        | "press"
-        | "scroll"
-        | "open_tab"
-        | "navigate"
-        | "search"
-        | "close_tab"
-        | "switch_tab";
-
-    interface ContentMessage {
-        action: "PROCESS_IMAGE";
-        imageUri: string;
-    }
-
-    interface PingMessage {
-        type: "PING";
-    }
-
-    interface ActionPayload {
-        action: BrowserAction;
-
-        x?: number;
-        y?: number;
-
-        text?: string;
-        key?: string;
-
-        direction?: "up" | "down";
-        amount?: number;
-
-        url?: string;
-        query?: string;
-        tab_id?: number;
-
-        step_index: number;
-        is_last_step: boolean;
-    }
-
-    interface ActionCoordinatesMessage {
-        type: "ACTION_COORDINATES";
-        request_id?: string;
-        action_id?: string;
-        tabId?: number;
-        payload: ActionPayload;
-    }
-
-    interface ActionResultMessage {
-        type: "ACTION_RESULT";
-        request_id?: string;
-        action_id?: string;
-        payload: {
-            success: boolean;
-            action: BrowserAction;
-            step_index: number;
-            error?: string;
-        };
-    }
-
-    type IncomingMessage =
-        | ContentMessage
-        | PingMessage
-        | ActionCoordinatesMessage;
-
-    function isPingMessage(
-        message: IncomingMessage
-    ): message is PingMessage {
-        return (
-            "type" in message &&
-            message.type === "PING"
-        );
-    }
-
-    function isContentMessage(
-        message: IncomingMessage
-    ): message is ContentMessage {
-        return (
-            "action" in message &&
-            message.action === "PROCESS_IMAGE"
-        );
-    }
-
-    function isActionCoordinatesMessage(
-        message: IncomingMessage
-    ): message is ActionCoordinatesMessage {
-        return (
-            "type" in message &&
-            message.type === "ACTION_COORDINATES"
-        );
-    }
-
-    function isVisible(
-        element: Element
-    ): element is HTMLElement {
-        const htmlElement =
-            element as HTMLElement;
-
-        const rect =
-            htmlElement.getBoundingClientRect();
-
-        const style =
-            window.getComputedStyle(
-                htmlElement
-            );
-
-        return (
-            rect.width > 0 &&
-            rect.height > 0 &&
-            style.display !== "none" &&
-            style.visibility !== "hidden" &&
-            style.opacity !== "0"
-        );
-    }
-
-    function getClickableElement(
-        x: number,
-        y: number
-    ): HTMLElement | null {
-
-        const element =
-            document.elementFromPoint(
-                x,
-                y
-            );
-
-        if (!(element instanceof HTMLElement)) {
-            return null;
+    target.dispatchEvent(
+      new KeyboardEvent(
+        "keyup",
+        {
+          key,
+          code: key,
+          bubbles: true,
+          cancelable: true
         }
+      )
+    );
 
-        const clickable =
-            element.closest(
-                "button, a, input, textarea, select, [role='button'], [role='link'], [tabindex]"
-            );
+    if (key === "Enter") {
+      const form =
+        target.closest("form");
 
+      if (
+        form instanceof
+        HTMLFormElement
+      ) {
         if (
-            clickable instanceof HTMLElement &&
-            isVisible(clickable)
+          typeof form.requestSubmit ===
+          "function"
         ) {
-            return clickable;
+          form.requestSubmit();
+        } else {
+          form.submit();
         }
-
-        return null;
+      }
     }
+  }
 
-    function findInputAt(
-        x: number,
-        y: number
-    ):
-        | HTMLInputElement
-        | HTMLTextAreaElement
-        | HTMLElement
-        | null {
+  function performScroll(
+    direction: "up" | "down",
+    amount: number
+  ): void {
+    const distance =
+      direction === "down"
+        ? amount
+        : -amount;
 
-        const coordinateElement =
-            document.elementFromPoint(
-                x,
-                y
-            );
+    window.scrollBy({
+      top: distance,
+      left: 0,
+      behavior: "smooth"
+    });
+  }
 
-        if (
-            coordinateElement instanceof HTMLElement
-        ) {
-            const directInput =
-                coordinateElement.closest(
-                    "input:not([type='hidden']):not([type='password']), textarea, [contenteditable='true']"
-                );
-
-            if (
-                directInput instanceof HTMLElement &&
-                isVisible(directInput) &&
-                !directInput.hasAttribute("disabled")
-            ) {
-                return directInput;
-            }
-        }
-
-        const active =
-            document.activeElement;
-
-        if (active instanceof HTMLElement) {
-            const isInput =
-                active instanceof HTMLInputElement &&
-                active.type !== "hidden" &&
-                active.type !== "password";
-
-            const isTextarea =
-                active instanceof HTMLTextAreaElement;
-
-            const isContentEditable =
-                active.isContentEditable;
-
-            if (
-                (
-                    isInput ||
-                    isTextarea ||
-                    isContentEditable
-                ) &&
-                isVisible(active)
-            ) {
-                return active;
-            }
-        }
-
-        const selectors = [
-            "input[type='search']",
-            "input[type='text']",
-            "textarea[name='q']",
-            "textarea[aria-label*='Search' i]",
-            "input[name='q']",
-            "input[aria-label*='Search' i]"
-        ];
-
-        const candidates =
-            new Set<HTMLElement>();
-
-        for (
-            const selector of selectors
-        ) {
-            document
-                .querySelectorAll(selector)
-                .forEach((element) => {
-                    if (
-                        element instanceof HTMLElement &&
-                        isVisible(element) &&
-                        !element.hasAttribute(
-                            "disabled"
-                        )
-                    ) {
-                        candidates.add(
-                            element
-                        );
-                    }
-                });
-        }
-
-        if (
-            candidates.size === 1
-        ) {
-            return [...candidates][0];
-        }
-
-        return null;
-    }
-
-    function setInputValue(
-        element:
-            | HTMLInputElement
-            | HTMLTextAreaElement
-            | HTMLElement,
-        text: string
-    ): void {
-
-        if (
-            element instanceof HTMLInputElement ||
-            element instanceof HTMLTextAreaElement
-        ) {
-            const prototype =
-                Object.getPrototypeOf(
-                    element
-                );
-
-            const descriptor =
-                Object.getOwnPropertyDescriptor(
-                    prototype,
-                    "value"
-                );
-
-            if (descriptor?.set) {
-                descriptor.set.call(
-                    element,
-                    text
-                );
-            } else {
-                element.value =
-                    text;
-            }
-
-            element.dispatchEvent(
-                new Event(
-                    "input",
-                    {
-                        bubbles: true
-                    }
-                )
-            );
-
-            element.dispatchEvent(
-                new Event(
-                    "change",
-                    {
-                        bubbles: true
-                    }
-                )
-            );
-
-            element.focus();
-
-            return;
-        }
-
-        if (
-            element.isContentEditable
-        ) {
-            element.focus();
-
-            element.textContent =
-                text;
-
-            element.dispatchEvent(
-                new InputEvent(
-                    "input",
-                    {
-                        bubbles: true,
-                        inputType:
-                            "insertText",
-                        data: text
-                    }
-                )
-            );
-        }
-    }
-
-    function normalizeKey(
-        key: string
-    ): string {
-
-        const aliases: Record<
-            string,
-            string
-        > = {
-            enter: "Enter",
-            return: "Enter",
-            esc: "Escape",
-            escape: "Escape",
-            tab: "Tab",
-            backspace: "Backspace",
-            delete: "Delete",
-            space: " ",
-            arrowup: "ArrowUp",
-            arrowdown: "ArrowDown",
-            arrowleft: "ArrowLeft",
-            arrowright: "ArrowRight"
-        };
-
-        return (
-            aliases[
-                key.toLowerCase()
-            ] ?? key
-        );
-    }
-
-    function executeClick(
-        x: number,
-        y: number
-    ): void {
-
-        const element =
-            getClickableElement(
-                x,
-                y
-            );
-
-        if (!element) {
+  async function executeAction(
+    action: ActionPayload
+  ): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    try {
+      switch (action.action) {
+        case "click":
+          if (
+            typeof action.x !==
+              "number" ||
+            typeof action.y !==
+              "number"
+          ) {
             throw new Error(
-                "No clickable element found at coordinates"
+              "Click requires x and y"
             );
-        }
+          }
 
-        element.click();
-    }
+          performClick(
+            action.x,
+            action.y
+          );
 
-    function executeType(
-        x: number,
-        y: number,
-        text: string
-    ): void {
+          break;
 
-        const input =
-            findInputAt(
-                x,
-                y
-            );
-
-        if (!input) {
+        case "type":
+          if (
+            typeof action.text !==
+            "string"
+          ) {
             throw new Error(
-                "No input element found at coordinates"
+              "Type requires text"
             );
-        }
+          }
 
-        setInputValue(
-            input,
-            text
-        );
-    }
+          performType(
+            action.text,
+            action.x,
+            action.y
+          );
 
-    function executePress(
-        key: string
-    ): void {
+          break;
 
-        const normalizedKey =
-            normalizeKey(key);
-
-        const active =
-            document.activeElement;
-
-        if (
-            !(active instanceof HTMLElement)
-        ) {
+        case "press":
+          if (
+            typeof action.key !==
+            "string"
+          ) {
             throw new Error(
-                "No active element available"
+              "Press requires key"
             );
-        }
+          }
 
-        active.dispatchEvent(
-            new KeyboardEvent(
-                "keydown",
-                {
-                    key: normalizedKey,
-                    code: normalizedKey,
-                    bubbles: true,
-                    cancelable: true
-                }
-            )
-        );
+          performPress(
+            action.key
+          );
 
-        active.dispatchEvent(
-            new KeyboardEvent(
-                "keyup",
-                {
-                    key: normalizedKey,
-                    code: normalizedKey,
-                    bubbles: true,
-                    cancelable: true
-                }
-            )
-        );
+          break;
 
-        if (
-            normalizedKey === "Enter" &&
-            (
-                active instanceof HTMLInputElement ||
-                active instanceof HTMLTextAreaElement
-            )
-        ) {
-            active.form?.requestSubmit();
-        }
+        case "scroll":
+          if (
+            !action.direction ||
+            typeof action.amount !==
+              "number"
+          ) {
+            throw new Error(
+              "Scroll requires direction and amount"
+            );
+          }
+
+          performScroll(
+            action.direction,
+            action.amount
+          );
+
+          break;
+
+        case "open_tab":
+        case "navigate":
+        case "search":
+        case "close_tab":
+        case "switch_tab":
+          throw new Error(
+            `${action.action} is handled by the background service worker`
+          );
+      }
+
+      return {
+        success: true
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : String(error)
+      };
     }
+  }
 
-    function executeScroll(
-        direction: "up" | "down",
-        amount: number
-    ): void {
+  chrome.runtime.onMessage.addListener(
+    (
+      rawMessage: unknown,
+      _sender,
+      sendResponse
+    ) => {
+      const message =
+        rawMessage as IncomingMessage;
 
-        const distance =
-            direction === "down"
-                ? amount
-                : -amount;
-
-        window.scrollBy({
-            top: distance,
-            behavior: "smooth"
+      if (
+        isPingMessage(message)
+      ) {
+        sendResponse({
+          success: true
         });
-    }
 
-    function validateAction(
-        message: ActionCoordinatesMessage
-    ): void {
+        return true;
+      }
 
-        const payload =
-            message.payload;
-
-        if (!payload) {
-            throw new Error(
-                "Missing payload"
+      if (
+        isActionMessage(message)
+      ) {
+        executeAction(
+          message.action
+        )
+          .then((result) => {
+            sendResponse(
+              result
             );
-        }
-
-        if (
-            !Number.isInteger(
-                payload.step_index
-            ) ||
-            payload.step_index < 0
-        ) {
-            throw new Error(
-                "Invalid step_index"
-            );
-        }
-
-        if (
-            payload.action === "click" ||
-            payload.action === "type"
-        ) {
-            if (
-                typeof payload.x !== "number" ||
-                typeof payload.y !== "number"
-            ) {
-                throw new Error(
-                    "Missing coordinates"
-                );
-            }
-        }
-
-        if (
-            payload.action === "type" &&
-            typeof payload.text !== "string"
-        ) {
-            throw new Error(
-                "Missing text"
-            );
-        }
-
-        if (
-            payload.action === "press" &&
-            typeof payload.key !== "string"
-        ) {
-            throw new Error(
-                "Missing key"
-            );
-        }
-
-        if (
-            payload.action === "scroll" &&
-            (
-                payload.direction !== "up" &&
-                payload.direction !== "down"
-            )
-        ) {
-            throw new Error(
-                "Missing scroll direction"
-            );
-        }
-    }
-
-    function executeAction(
-        message: ActionCoordinatesMessage
-    ): ActionResultMessage {
-
-        const payload =
-            message.payload;
-
-        try {
-            validateAction(
-                message
-            );
-
-            switch (
-                payload.action
-            ) {
-                case "click":
-                    executeClick(
-                        payload.x!,
-                        payload.y!
-                    );
-                    break;
-
-                case "type":
-                    executeType(
-                        payload.x!,
-                        payload.y!,
-                        payload.text!
-                    );
-                    break;
-
-                case "press":
-                    executePress(
-                        payload.key!
-                    );
-                    break;
-
-                case "scroll":
-                    executeScroll(
-                        payload.direction!,
-                        payload.amount ??
-                            500
-                    );
-                    break;
-
-                default:
-                    throw new Error(
-                        `Action ${payload.action} is handled by background`
-                    );
-            }
-
-            return {
-                type: "ACTION_RESULT",
-                request_id:
-                    message.request_id,
-                action_id:
-                    message.action_id,
-                payload: {
-                    success: true,
-                    action:
-                        payload.action,
-                    step_index:
-                        payload.step_index
-                }
-            };
-
-        } catch (error) {
-            return {
-                type: "ACTION_RESULT",
-                request_id:
-                    message.request_id,
-                action_id:
-                    message.action_id,
-                payload: {
-                    success: false,
-                    action:
-                        payload.action,
-                    step_index:
-                        payload.step_index,
-                    error:
-                        error instanceof Error
-                            ? error.message
-                            : String(error)
-                }
-            };
-        }
-    }
-
-    function redactScreenProcess(
-        imageUri: string
-    ): void {
-
-        console.log(
-            `[CS] Image size: ${imageUri.length} chars`
-        );
-
-        const img =
-            new Image();
-
-        img.onload = () => {
-
-            const canvas =
-                document.createElement(
-                    "canvas"
-                );
-
-            canvas.width =
-                img.naturalWidth;
-
-            canvas.height =
-                img.naturalHeight;
-
-            const ctx =
-                canvas.getContext(
-                    "2d"
-                );
-
-            if (!ctx) {
-                console.error(
-                    "[CS] Canvas unavailable"
-                );
-                return;
-            }
-
-            ctx.drawImage(
-                img,
-                0,
-                0
-            );
-
-            const selectors = [
-                "input[type='email']",
-                "input[type='password']",
-                "input[name*='card' i]",
-                "input[name*='phone' i]",
-                "input[name*='ssn' i]",
-                "input[name*='address' i]"
-            ];
-
-            const elements =
-                document.querySelectorAll(
-                    selectors.join(",")
-                );
-
-            const scaleX =
-                canvas.width /
-                window.innerWidth;
-
-            const scaleY =
-                canvas.height /
-                window.innerHeight;
-
-            for (
-                const element of elements
-            ) {
-                if (
-                    !(element instanceof HTMLElement)
-                ) {
-                    continue;
-                }
-
-                const rect =
-                    element.getBoundingClientRect();
-
-                ctx.fillStyle =
-                    "black";
-
-                ctx.fillRect(
-                    rect.left * scaleX,
-                    rect.top * scaleY,
-                    rect.width * scaleX,
-                    rect.height * scaleY
-                );
-            }
-
-            const sanitizedUri =
-                canvas.toDataURL(
-                    "image/jpeg",
-                    0.9
-                );
-
-            chrome.runtime.sendMessage({
-                action:
-                    "REDACTION_COMPLETE",
-                sanitizedUri
+          })
+          .catch((error) => {
+            sendResponse({
+              success: false,
+              error:
+                error instanceof
+                Error
+                  ? error.message
+                  : String(error)
             });
-        };
+          });
 
-        img.onerror = () => {
-            console.error(
-                "[CS] Screenshot load failed"
-            );
-        };
+        return true;
+      }
 
-        img.src =
-            imageUri;
+      return false;
     }
+  );
 
-    chrome.runtime.onMessage.addListener(
-        (
-            message: IncomingMessage,
-            _sender,
-            sendResponse
-        ) => {
-
-            if (
-                isPingMessage(message)
-            ) {
-                sendResponse({
-                    success: true
-                });
-
-                return true;
-            }
-
-            if (
-                isContentMessage(message)
-            ) {
-                redactScreenProcess(
-                    message.imageUri
-                );
-
-                return true;
-            }
-
-            if (
-                isActionCoordinatesMessage(
-                    message
-                )
-            ) {
-                const result =
-                    executeAction(
-                        message
-                    );
-
-                chrome.runtime.sendMessage(
-                    result
-                );
-
-                return true;
-            }
-
-            return false;
-        }
-    );
+  console.log(
+    "[Project-Vision] Content script ready"
+  );
 })();
