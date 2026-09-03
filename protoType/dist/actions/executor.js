@@ -2,17 +2,16 @@ export async function executeContentAction(action, tabId) {
     try {
         const response = await chrome.tabs.sendMessage(tabId, {
             type: "AGENT_ACTION",
-            action
+            action,
         });
         if (!response ||
-            typeof response.success !==
-                "boolean") {
+            typeof response.success !== "boolean") {
             return {
                 success: false,
                 action: action.action,
                 step_index: action.step_index,
                 tab_id: tabId,
-                error: "Invalid response from content script"
+                error: "Invalid response from content script",
             };
         }
         return {
@@ -20,7 +19,7 @@ export async function executeContentAction(action, tabId) {
             action: action.action,
             step_index: action.step_index,
             tab_id: tabId,
-            error: response.error
+            error: response.error,
         };
     }
     catch (error) {
@@ -31,7 +30,7 @@ export async function executeContentAction(action, tabId) {
             tab_id: tabId,
             error: error instanceof Error
                 ? error.message
-                : String(error)
+                : String(error),
         };
     }
 }

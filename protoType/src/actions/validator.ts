@@ -1,10 +1,6 @@
-import type {
-  ActionPayload,
-  BrowserAction,
-  ScrollDirection
-} from "./types.js";
+import type { ActionPayload } from "../types.js";
 
-const browserActions: BrowserAction[] = [
+const validActions = new Set([
   "click",
   "type",
   "press",
@@ -13,117 +9,69 @@ const browserActions: BrowserAction[] = [
   "navigate",
   "search",
   "close_tab",
-  "switch_tab"
-];
-
-const scrollDirections: ScrollDirection[] = [
-  "up",
-  "down"
-];
-
-function isBrowserAction(
-  value: unknown
-): value is BrowserAction {
-  return (
-    typeof value === "string" &&
-    browserActions.includes(
-      value as BrowserAction
-    )
-  );
-}
-
-function isScrollDirection(
-  value: unknown
-): value is ScrollDirection {
-  return (
-    typeof value === "string" &&
-    scrollDirections.includes(
-      value as ScrollDirection
-    )
-  );
-}
+  "switch_tab",
+]);
 
 export function validateAction(
-  value: unknown
-): value is ActionPayload {
-  if (
-    !value ||
-    typeof value !== "object"
-  ) {
+  action: ActionPayload
+): boolean {
+  if (!action || typeof action !== "object") {
     return false;
   }
 
-  const action =
-    value as Partial<ActionPayload>;
-
-  if (
-    !isBrowserAction(action.action)
-  ) {
+  if (!validActions.has(action.action)) {
     return false;
   }
 
   if (
-    typeof action.step_index !==
-      "number" ||
-    !Number.isInteger(
-      action.step_index
-    ) ||
+    !Number.isInteger(action.step_index) ||
     action.step_index < 0
   ) {
     return false;
   }
 
-  if (
-    typeof action.is_last_step !==
-      "boolean"
-  ) {
+  if (typeof action.is_last_step !== "boolean") {
     return false;
   }
 
   switch (action.action) {
     case "click":
       return (
-        typeof action.x ===
-          "number" &&
-        typeof action.y ===
-          "number"
+        typeof action.x === "number" &&
+        Number.isFinite(action.x) &&
+        typeof action.y === "number" &&
+        Number.isFinite(action.y)
       );
 
     case "type":
-      return (
-        typeof action.text ===
-        "string"
-      );
+      return typeof action.text === "string";
 
     case "press":
       return (
-        typeof action.key ===
-        "string"
+        typeof action.key === "string" &&
+        action.key.length > 0
       );
 
     case "scroll":
       return (
-        isScrollDirection(
-          action.direction
-        ) &&
-        typeof action.amount ===
-          "number" &&
+        (action.direction === "up" ||
+          action.direction === "down") &&
+        typeof action.amount === "number" &&
+        Number.isFinite(action.amount) &&
         action.amount > 0
       );
 
     case "open_tab":
     case "navigate":
       return (
-        typeof action.url ===
-          "string" &&
-        action.url.length > 0
+        typeof action.url === "string" &&
+        action.url.trim().length > 0
       );
 
     case "search":
       return (
-        typeof action.query ===
-          "string" &&
-        action.query.length > 0
+        typeof action.query === "string" &&
+        action.query.trim().length > 0
       );
 
     case "close_tab":
@@ -131,11 +79,9 @@ export function validateAction(
 
     case "switch_tab":
       return (
-        typeof action.tab_id ===
-          "number" &&
-        Number.isInteger(
-          action.tab_id
-        )
+        typeof action.tab_id === "number" &&
+        Number.isInteger(action.tab_id) &&
+        action.tab_id >= 0
       );
 
     default:

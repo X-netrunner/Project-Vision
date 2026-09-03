@@ -5,8 +5,9 @@ import websockets
 # Valid base64-encoded 1x1 transparent PNG pixel
 DUMMY_BASE64_SS = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
+
 async def test_pipeline():
-    uri = "ws://10.67.21.46:8001/ws"
+    uri = "ws://127.0.0.1:8001/ws"
 
     print(f"[*] Connecting to {uri}...")
     try:
@@ -18,47 +19,48 @@ async def test_pipeline():
             print(f"\n[>] Sending Phase 1 Prompt: '{test_prompt}'")
             await websocket.send(test_prompt)
 
-            # Step 2: Receive REQUEST_SS response from main.py
-            response_raw = await websocket.recv()
-            response = json.loads(response_raw)
-            print(f"[<] Received Phase 1 Response:\n{json.dumps(response, indent=2)}")
+            # The server builds a plan but does NOT reply with REQUEST_SS; it
+            # waits for us to send a screenshot for each step. We simulate the
+            # extension by sending a screenshot, then reading the AGENT_ACTION.
+            await asyncio.sleep(2.0)
 
-            req_id = response.get("request_id", "req_001")
-            total_steps = response["payload"]["total_steps"]
-
-            # Step 3: Loop through all steps with REDACTED_SCREENSHOT messages
-            for current_step in range(total_steps):
-                print(f"\n--- Running Step {current_step + 1}/{total_steps} ---")
-
-                redacted_ss_payload = {
-                    "type": "REDACTED_SCREENSHOT",
-                    "request_id": req_id,
-                    "tab_id": 123,
-                    "step_index": current_step,
-                    "image": DUMMY_BASE64_SS,
-                    "action_result": {
-                        "success": True,
-                        "action": "click",
-                        "step_index": current_step,
-                        "tab_id": 123
-                    }
-                }
-                print(f"[>] Sending REDACTED_SCREENSHOT for Step {current_step + 1}...")
-                await websocket.send(json.dumps(redacted_ss_payload))
-
-                # Step 4: Receive AGENT_ACTION from Srijan
-                agent_action_raw = await websocket.recv()
-                agent_action = json.loads(agent_action_raw)
-                print(f"[<] Received AGENT_ACTION from Srijan:\n{json.dumps(agent_action, indent=2)}")
-
-                if agent_action.get("is_last_step"):
-                    print("\n[+] Final step completed successfully!")
-                    break
+            # Step 2: Send a screenshot for step 0 and read AGENT_ACTION.
+            # The first action is usually 'navigate' (non-visual), so index 0.
+            await send_and_receive(websocket, request_id="req_001", step_index=0)
 
     except TimeoutError:
         print("[!] Connection timed out. Make sure 'python main.py' is running on port 8001.")
     except Exception as e:
         print(f"[!] Error: {e}")
+
+
+async def send_and_receive(websocket, request_id: str, step_index: int):
+    redacted_ss_payload = {
+        "type": "REDACTED_SCREENSHOT",
+        "request_id": request_id,
+        "tab_id": 123,
+        "step_index": step_index,
+        "image": DUMMY_BASE64_SS,
+        # HiDPI screens are captured in device pixels; the server divides the
+        # predicted coordinates by this value so clicks land at viewport pixels.
+        "device_pixel_ratio": 1.5,
+        "action_result": {
+            "success": True,
+            "action": "click",
+            "step_index": step_index,
+            "tab_id": 123
+        }
+    }
+    print(f"\n[>] Sending REDACTED_SCREENSHOT for Step {step_index + 1}...")
+    await websocket.send(json.dumps(redacted_ss_payload))
+
+    try:
+        agent_action_raw = await asyncio.wait_for(websocket.recv(), timeout=120)
+        agent_action = json.loads(agent_action_raw)
+        print(f"[<] Received from Srijan:\n{json.dumps(agent_action, indent=2)}")
+    except asyncio.TimeoutError:
+        print("[!] Timed out waiting for AGENT_ACTION from Srijan.")
+
 
 if __name__ == "__main__":
     asyncio.run(test_pipeline())

@@ -1,7 +1,7 @@
 import type {
   ActionPayload,
-  ActionResult
-} from "./types.js";
+  ActionResult,
+} from "../types.js";
 
 export async function executeContentAction(
   action: ActionPayload,
@@ -13,45 +13,41 @@ export async function executeContentAction(
         tabId,
         {
           type: "AGENT_ACTION",
-          action
+          action,
         }
       );
 
     if (
       !response ||
-      typeof response.success !==
-        "boolean"
+      typeof response.success !== "boolean"
     ) {
       return {
         success: false,
         action: action.action,
-        step_index:
-          action.step_index,
+        step_index: action.step_index,
         tab_id: tabId,
         error:
-          "Invalid response from content script"
+          "Invalid response from content script",
       };
     }
 
     return {
       success: response.success,
       action: action.action,
-      step_index:
-        action.step_index,
+      step_index: action.step_index,
       tab_id: tabId,
-      error: response.error
+      error: response.error,
     };
   } catch (error) {
     return {
       success: false,
       action: action.action,
-      step_index:
-        action.step_index,
+      step_index: action.step_index,
       tab_id: tabId,
       error:
         error instanceof Error
           ? error.message
-          : String(error)
+          : String(error),
     };
   }
 }

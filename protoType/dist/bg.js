@@ -1,285 +1,341 @@
 import { validateAction } from "./actions/validator.js";
 import { executeContentAction } from "./actions/executor.js";
 const SRIJAN_WS_URL = "ws://127.0.0.1:8001/ws";
-const VARUN_WS_URL = "ws://127.0.0.1:8000/ws";
-let srijanSocket = null;
-let varunSocket = null;
-let srijanReconnectTimer = null;
-let varunReconnectTimer = null;
-function createRequestId() {
-    return crypto.randomUUID();
-}
-function connectSrijan() {
-    if (srijanSocket &&
-        (srijanSocket.readyState ===
-            WebSocket.OPEN ||
-            srijanSocket.readyState ===
-                WebSocket.CONNECTING)) {
-        return;
+// const VARUN_WS_URL = "YOUR_EXISTING_VARUN_WS_URL";
+// let varunSocket: WebSocket | null = null;
+let offscreenPort = null;
+const OFFSCREEN_URL = "offscreen.html";
+const CHAT_STORAGE_KEY = "projectVisionChatMessages";
+const MAX_CHAT_MESSAGES = 100;
+async function getChatMessages() {
+    const stored = await chrome.storage.local.get(CHAT_STORAGE_KEY);
+    const messages = stored[CHAT_STORAGE_KEY];
+    if (!Array.isArray(messages)) {
+        return [];
     }
-    console.log("[Project-Vision] Connecting to Srijan");
-    srijanSocket =
-        new WebSocket(SRIJAN_WS_URL);
-    srijanSocket.onopen = () => {
-        console.log("[Project-Vision] Connected to Srijan");
-        if (srijanReconnectTimer) {
-            clearTimeout(srijanReconnectTimer);
-            srijanReconnectTimer =
-                null;
-        }
-    };
-    srijanSocket.onmessage = (event) => {
-        handleSrijanMessage(event.data);
-    };
-    srijanSocket.onerror = (error) => {
-        console.error("[Project-Vision] Srijan WebSocket error", error);
-    };
-    srijanSocket.onclose = () => {
-        console.log("[Project-Vision] Srijan disconnected");
-        srijanSocket = null;
-        scheduleSrijanReconnect();
-    };
+    return messages;
 }
-function connectVarun() {
-    if (varunSocket &&
-        (varunSocket.readyState ===
-            WebSocket.OPEN ||
-            varunSocket.readyState ===
-                WebSocket.CONNECTING)) {
-        return;
+async function saveChatMessages(messages) {
+    const trimmed = messages.slice(-MAX_CHAT_MESSAGES);
+    await chrome.storage.local.set({
+        [CHAT_STORAGE_KEY]: trimmed,
+    });
+}
+async function addChatMessage(message) {
+    const messages = await getChatMessages();
+    messages.push(message);
+    await saveChatMessages(messages);
+    try {
+        await chrome.runtime.sendMessage({
+            type: "CHAT_MESSAGE",
+            message,
+        });
     }
-    console.log("[Project-Vision] Connecting to Varun");
-    varunSocket =
-        new WebSocket(VARUN_WS_URL);
-    varunSocket.onopen = () => {
-        console.log("[Project-Vision] Connected to Varun");
-        if (varunReconnectTimer) {
-            clearTimeout(varunReconnectTimer);
-            varunReconnectTimer =
-                null;
-        }
-    };
-    varunSocket.onmessage = (event) => {
-        handleVarunMessage(event.data);
-    };
-    varunSocket.onerror = (error) => {
-        console.error("[Project-Vision] Varun WebSocket error", error);
-    };
-    varunSocket.onclose = () => {
-        console.log("[Project-Vision] Varun disconnected");
-        varunSocket = null;
-        scheduleVarunReconnect();
+    catch {
+    }
+}
+function createChatMessage(sender, options) {
+    return {
+        id: crypto.randomUUID(),
+        sender,
+        timestamp: Date.now(),
+        ...options,
     };
 }
-function scheduleSrijanReconnect() {
-    if (srijanReconnectTimer) {
-        return;
-    }
-    srijanReconnectTimer =
-        setTimeout(() => {
-            srijanReconnectTimer =
-                null;
-            connectSrijan();
-        }, 3000);
-}
-function scheduleVarunReconnect() {
-    if (varunReconnectTimer) {
-        return;
-    }
-    varunReconnectTimer =
-        setTimeout(() => {
-            varunReconnectTimer =
-                null;
-            connectVarun();
-        }, 3000);
+function log(...args) {
+    console.log("[Project-Vision]", ...args);
 }
 function sendToSrijan(message) {
-    if (!srijanSocket ||
-        srijanSocket.readyState !==
-            WebSocket.OPEN) {
-        console.error("[Project-Vision] Srijan connection unavailable");
-        return;
+    if (!offscreenPort) {
+        log("Srijan WebSocket bridge is not connected");
+        return false;
     }
-    srijanSocket.send(JSON.stringify(message));
+    try {
+        offscreenPort.postMessage({
+            type: "WS_SEND",
+            data: JSON.stringify(message),
+        });
+        return true;
+    }
+    catch (error) {
+        log("Failed to send message to Srijan:", error);
+        return false;
+    }
 }
-function sendToVarun(message) {
-    if (!varunSocket ||
-        varunSocket.readyState !==
-            WebSocket.OPEN) {
-        console.error("[Project-Vision] Varun connection unavailable");
-        return;
+async function ensureOffscreenDocument() {
+    try {
+        await chrome.offscreen.createDocument({
+            url: OFFSCREEN_URL,
+            reasons: ["BLOBS"],
+            justification: "Keep an idle-persistent WebSocket connection to the Project-Vision server alive across service-worker evictions.",
+        });
     }
-    varunSocket.send(JSON.stringify(message));
+    catch (error) {
+        // Only a single offscreen document may exist; treat "already
+        // present" errors as success.
+        log("Offscreen document create (may already exist):", error);
+    }
+}
+function registerOffscreenListener() {
+    chrome.runtime.onConnect.addListener((port) => {
+        if (port.name !== "offscreen") {
+            return;
+        }
+        log("Offscreen bridge connected.");
+        offscreenPort = port;
+        port.onMessage.addListener((message) => {
+            const msg = message;
+            if (msg?.type === "WS_MSG" &&
+                typeof msg.data === "string") {
+                void handleSrijanMessage(msg.data).catch((error) => {
+                    log("Unhandled error processing Srijan message:", error);
+                });
+                return;
+            }
+            if (msg?.type === "WS_STATUS") {
+                log("Srijan WebSocket status:", msg
+                    .status);
+            }
+        });
+        port.onDisconnect.addListener(() => {
+            log("Offscreen bridge disconnected.");
+            if (offscreenPort === port) {
+                offscreenPort = null;
+            }
+        });
+    });
+}
+async function setupOffscreenBridge() {
+    try {
+        await ensureOffscreenDocument();
+    }
+    catch (error) {
+        log("Failed to set up offscreen bridge:", error);
+    }
 }
 async function getActiveTab() {
     const tabs = await chrome.tabs.query({
         active: true,
-        currentWindow: true
+        currentWindow: true,
     });
-    if (!tabs[0] ||
-        typeof tabs[0].id !==
-            "number") {
-        throw new Error("No active tab");
-    }
-    return tabs[0];
+    return tabs[0] ?? null;
 }
-async function waitForTabReady(tabId, timeoutMs = 10000) {
-    const start = Date.now();
-    while (Date.now() - start <
-        timeoutMs) {
-        try {
-            const tab = await chrome.tabs.get(tabId);
-            if (tab.status ===
-                "complete") {
-                return;
-            }
-        }
-        catch {
-            throw new Error("Tab no longer exists");
-        }
-        await new Promise((resolve) => {
-            setTimeout(resolve, 100);
-        });
+async function waitForTabReady(tabId) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === "complete") {
+        return;
     }
-    throw new Error("Timed out waiting for tab");
+    await new Promise((resolve) => {
+        const listener = (changedTabId, changeInfo) => {
+            if (changedTabId === tabId &&
+                changeInfo.status ===
+                    "complete") {
+                chrome.tabs.onUpdated.removeListener(listener);
+                resolve();
+            }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+    });
 }
 async function ensureContentScript(tabId) {
     try {
-        await chrome.tabs.sendMessage(tabId, {
-            type: "PING"
+        const response = await chrome.tabs.sendMessage(tabId, {
+            type: "PING",
         });
-        return;
+        if (response &&
+            response.success === true) {
+            return;
+        }
     }
     catch {
+        // Content script isn't loaded.
     }
     await chrome.scripting.executeScript({
         target: {
-            tabId
+            tabId,
         },
         files: [
-            "dist/cs.js"
-        ]
-    });
-    await new Promise((resolve) => {
-        setTimeout(resolve, 100);
-    });
-    await chrome.tabs.sendMessage(tabId, {
-        type: "PING"
+            "dist/cs.js",
+        ],
     });
 }
-async function captureScreenshotBase64(tabId) {
-    await chrome.tabs.update(tabId, {
-        active: true
-    });
-    await new Promise((resolve) => {
-        setTimeout(resolve, 200);
-    });
-    const dataUrl = await chrome.tabs.captureVisibleTab({
-        format: "jpeg",
-        quality: 90
-    });
-    const commaIndex = dataUrl.indexOf(",");
-    if (commaIndex === -1) {
-        throw new Error("Invalid screenshot data");
+async function captureScreenshot(tabId) {
+    const tab = await chrome.tabs.get(tabId);
+    const url = tab.url ?? "";
+    if (url.startsWith("chrome://") ||
+        url.startsWith("chrome-extension://") ||
+        url.startsWith("edge://")) {
+        throw new Error("Cannot capture screenshots on this browser page.");
     }
-    return dataUrl.slice(commaIndex + 1);
+    return new Promise((resolve, reject) => {
+        chrome.tabs.captureVisibleTab({
+            format: "jpeg",
+            quality: 90,
+        }, (dataUrl) => {
+            const runtimeError = chrome.runtime.lastError;
+            if (runtimeError) {
+                reject(new Error(runtimeError.message));
+                return;
+            }
+            if (!dataUrl) {
+                reject(new Error("Screenshot capture returned no data."));
+                return;
+            }
+            const prefix = "data:image/jpeg;base64,";
+            const image = dataUrl.startsWith(prefix)
+                ? dataUrl.slice(prefix.length)
+                : dataUrl;
+            resolve(image);
+        });
+    });
 }
-async function sendRawScreenshotToVarun(requestId, tabId, stepIndex, actionResult) {
-    const image = await captureScreenshotBase64(tabId);
-    const message = {
-        type: "RAW_SCREENSHOT",
-        request_id: requestId,
-        tab_id: tabId,
-        step_index: stepIndex,
-        image,
-        action_result: actionResult
-    };
-    sendToVarun(message);
+/*
+async function sendRawScreenshotToVarun(
+  message: RawScreenshotMessage
+): Promise<boolean> {
+  if (
+    !varunSocket ||
+    varunSocket.readyState !== WebSocket.OPEN
+  ) {
+    return false;
+  }
+
+  varunSocket.send(
+    JSON.stringify(message)
+  );
+
+  return true;
+}
+*/
+async function getDevicePixelRatio(tabId) {
+    try {
+        const results = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: () => window.devicePixelRatio,
+        });
+        const value = results?.[0]?.result;
+        return typeof value === "number" && value > 0
+            ? value
+            : 1;
+    }
+    catch {
+        return 1;
+    }
+}
+async function sendRawScreenshotToSrijan(requestId, tabId, stepIndex, actionResult) {
+    try {
+        const image = await captureScreenshot(tabId);
+        const devicePixelRatio = await getDevicePixelRatio(tabId);
+        const message = {
+            type: "RAW_SCREENSHOT",
+            request_id: requestId,
+            tab_id: tabId,
+            step_index: stepIndex,
+            image,
+            action_result: actionResult,
+            device_pixel_ratio: devicePixelRatio,
+        };
+        return sendToSrijan(message);
+    }
+    catch (error) {
+        sendErrorToSrijan(requestId, error instanceof Error
+            ? error.message
+            : String(error));
+        return false;
+    }
 }
 function sendActionResultToSrijan(requestId, actionId, result) {
     const message = {
         type: "ACTION_RESULT",
         request_id: requestId,
         action_id: actionId,
-        result
+        result,
     };
-    sendToSrijan(message);
+    return sendToSrijan(message);
 }
-async function resolveTabId(message) {
-    if (typeof message.tab_id ===
-        "number") {
-        return message.tab_id;
-    }
-    if (typeof message.action.tab_id ===
-        "number") {
-        return message.action.tab_id;
-    }
-    const tab = await getActiveTab();
-    if (typeof tab.id !==
-        "number") {
-        throw new Error("Active tab has no id");
-    }
-    return tab.id;
+function sendErrorToSrijan(requestId, error) {
+    const message = {
+        type: "ERROR",
+        ...(requestId
+            ? {
+                request_id: requestId,
+            }
+            : {}),
+        error,
+    };
+    return sendToSrijan(message);
+}
+function sendUserPromptToSrijan(requestId, prompt) {
+    const message = {
+        type: "USER_PROMPT",
+        request_id: requestId,
+        prompt,
+    };
+    return sendToSrijan(message);
 }
 async function executeBackgroundAction(action, tabId) {
     try {
         switch (action.action) {
             case "open_tab": {
                 if (!action.url) {
-                    throw new Error("open_tab requires url");
+                    return {
+                        success: false,
+                        action: action.action,
+                        step_index: action.step_index,
+                        tab_id: tabId,
+                        error: "URL is required",
+                    };
                 }
-                const tab = await chrome.tabs.create({
+                const newTab = await chrome.tabs.create({
                     url: action.url,
-                    active: true
                 });
-                if (typeof tab.id !==
-                    "number") {
-                    throw new Error("Could not create tab");
-                }
-                await waitForTabReady(tab.id);
                 return {
                     success: true,
                     action: action.action,
                     step_index: action.step_index,
-                    tab_id: tab.id
+                    tab_id: newTab.id,
                 };
             }
             case "navigate": {
                 if (!action.url) {
-                    throw new Error("navigate requires url");
+                    return {
+                        success: false,
+                        action: action.action,
+                        step_index: action.step_index,
+                        tab_id: tabId,
+                        error: "URL is required",
+                    };
                 }
                 await chrome.tabs.update(tabId, {
                     url: action.url,
-                    active: true
                 });
-                await waitForTabReady(tabId);
                 return {
                     success: true,
                     action: action.action,
                     step_index: action.step_index,
-                    tab_id: tabId
+                    tab_id: tabId,
                 };
             }
             case "search": {
                 if (!action.query) {
-                    throw new Error("search requires query");
+                    return {
+                        success: false,
+                        action: action.action,
+                        step_index: action.step_index,
+                        tab_id: tabId,
+                        error: "Search query is required",
+                    };
                 }
                 const url = "https://duckduckgo.com/?q=" +
                     encodeURIComponent(action.query);
-                const tab = await chrome.tabs.create({
+                await chrome.tabs.update(tabId, {
                     url,
-                    active: true
                 });
-                if (typeof tab.id !==
-                    "number") {
-                    throw new Error("Could not create search tab");
-                }
-                await waitForTabReady(tab.id);
                 return {
                     success: true,
                     action: action.action,
                     step_index: action.step_index,
-                    tab_id: tab.id
+                    tab_id: tabId,
                 };
             }
             case "close_tab": {
@@ -288,26 +344,38 @@ async function executeBackgroundAction(action, tabId) {
                     success: true,
                     action: action.action,
                     step_index: action.step_index,
-                    tab_id: tabId
+                    tab_id: tabId,
                 };
             }
             case "switch_tab": {
                 if (typeof action.tab_id !==
                     "number") {
-                    throw new Error("switch_tab requires tab_id");
+                    return {
+                        success: false,
+                        action: action.action,
+                        step_index: action.step_index,
+                        tab_id: tabId,
+                        error: "tab_id is required",
+                    };
                 }
                 await chrome.tabs.update(action.tab_id, {
-                    active: true
+                    active: true,
                 });
                 return {
                     success: true,
                     action: action.action,
                     step_index: action.step_index,
-                    tab_id: action.tab_id
+                    tab_id: action.tab_id,
                 };
             }
             default:
-                throw new Error("Action is not a background action");
+                return {
+                    success: false,
+                    action: action.action,
+                    step_index: action.step_index,
+                    tab_id: tabId,
+                    error: "Unsupported background action",
+                };
         }
     }
     catch (error) {
@@ -318,206 +386,358 @@ async function executeBackgroundAction(action, tabId) {
             tab_id: tabId,
             error: error instanceof Error
                 ? error.message
-                : String(error)
+                : String(error),
         };
     }
 }
 async function executeAgentAction(message) {
-    if (!validateAction(message.action)) {
-        sendToSrijan({
-            type: "ERROR",
-            request_id: message.request_id,
-            error: "Invalid action received from Srijan"
-        });
+    const action = message.action;
+    if (!validateAction(action)) {
+        sendErrorToSrijan(message.request_id, "Invalid AGENT_ACTION payload");
         return;
     }
-    let tabId;
-    try {
+    let tabId = message.tab_id ??
+        action.tab_id;
+    if (typeof tabId !== "number") {
+        const activeTab = await getActiveTab();
+        if (!activeTab ||
+            typeof activeTab.id !==
+                "number") {
+            sendErrorToSrijan(message.request_id, "No active browser tab found");
+            return;
+        }
         tabId =
-            await resolveTabId(message);
+            activeTab.id;
+    }
+    try {
+        await waitForTabReady(tabId);
     }
     catch (error) {
-        sendActionResultToSrijan(message.request_id, message.action_id, {
-            success: false,
-            action: message.action.action,
-            step_index: message.step_index,
-            error: error instanceof Error
-                ? error.message
-                : String(error)
-        });
+        sendErrorToSrijan(message.request_id, error instanceof Error
+            ? error.message
+            : String(error));
         return;
     }
-    const backgroundActions = [
+    let result;
+    const backgroundActions = new Set([
         "open_tab",
         "navigate",
         "search",
         "close_tab",
-        "switch_tab"
-    ];
-    const isBackgroundAction = backgroundActions.includes(message.action.action);
-    let result;
-    if (isBackgroundAction) {
+        "switch_tab",
+    ]);
+    if (backgroundActions.has(action.action)) {
         result =
-            await executeBackgroundAction(message.action, tabId);
-        if (result.success &&
-            typeof result.tab_id ===
-                "number") {
-            tabId =
-                result.tab_id;
-        }
+            await executeBackgroundAction(action, tabId);
     }
     else {
         try {
-            await waitForTabReady(tabId);
             await ensureContentScript(tabId);
             result =
-                await executeContentAction(message.action, tabId);
+                await executeContentAction(action, tabId);
         }
         catch (error) {
             result = {
                 success: false,
-                action: message.action.action,
-                step_index: message.step_index,
+                action: action.action,
+                step_index: action.step_index,
                 tab_id: tabId,
                 error: error instanceof Error
                     ? error.message
-                    : String(error)
+                    : String(error),
             };
         }
     }
     sendActionResultToSrijan(message.request_id, message.action_id, result);
-    if (!result.success) {
-        return;
-    }
-    if (message.action.is_last_step) {
-        return;
-    }
-    if (message.action.action ===
-        "close_tab") {
-        const tabs = await chrome.tabs.query({
-            active: true,
-            currentWindow: true
-        });
-        const nextTab = tabs[0];
-        if (!nextTab ||
-            typeof nextTab.id !==
-                "number") {
-            return;
+    if (result.success &&
+        !message.is_last_step) {
+        try {
+            await sendRawScreenshotToSrijan(message.request_id, tabId, action.step_index, result);
         }
-        tabId =
-            nextTab.id;
-    }
-    try {
-        await sendRawScreenshotToVarun(message.request_id, tabId, message.step_index + 1, result);
-    }
-    catch (error) {
-        sendActionResultToSrijan(message.request_id, message.action_id, {
-            ...result,
-            success: false,
-            error: error instanceof Error
-                ? error.message
-                : String(error)
-        });
+        catch (error) {
+            log("Failed to send screenshot after action:", error);
+        }
     }
 }
-function handleSrijanMessage(rawData) {
+async function handleSrijanMessage(rawData) {
     try {
-        const message = JSON.parse(String(rawData));
-        if (message.type ===
+        let parsed;
+        if (typeof rawData === "string") {
+            parsed =
+                JSON.parse(rawData);
+        }
+        else {
+            parsed =
+                rawData;
+        }
+        const packet = parsed;
+        if (packet?.type ===
             "AGENT_ACTION") {
-            void executeAgentAction(message);
+            await addChatMessage(createChatMessage("server", {
+                type: "AGENT_ACTION",
+                raw: parsed,
+                text: `Agent action: ${String(packet.action?.action ??
+                    "unknown")}`,
+            }));
+            await executeAgentAction(parsed);
             return;
         }
-        if (message.type ===
+        if (packet?.type ===
             "ERROR") {
-            console.error("[Project-Vision] Srijan error:", message.error);
+            await addChatMessage(createChatMessage("server", {
+                type: "ERROR",
+                raw: parsed,
+                text: typeof packet.error ===
+                    "string"
+                    ? packet.error
+                    : "Server error",
+            }));
+            return;
         }
+        await addChatMessage(createChatMessage("server", {
+            type: typeof packet?.type ===
+                "string"
+                ? packet.type
+                : "JSON",
+            raw: parsed,
+            text: JSON.stringify(parsed, null, 2),
+        }));
     }
     catch (error) {
-        console.error("[Project-Vision] Invalid Srijan message", error);
+        const errorText = error instanceof Error
+            ? error.message
+            : String(error);
+        log("Failed to process Srijan JSON:", error);
+        await addChatMessage(createChatMessage("system", {
+            type: "JSON_PARSE_ERROR",
+            text: `Failed to process server JSON: ${errorText}`,
+        }));
+        sendErrorToSrijan(undefined, errorText);
     }
 }
-function handleVarunMessage(rawData) {
-    try {
-        const message = JSON.parse(String(rawData));
-        if (message.type ===
-            "REDACTED_SCREENSHOT") {
-            const outgoing = {
-                type: "REDACTED_SCREENSHOT",
-                request_id: message.request_id,
-                tab_id: message.tab_id,
-                step_index: message.step_index,
-                image: message.image,
-                action_result: message.action_result
-            };
-            sendToSrijan(outgoing);
-            return;
-        }
-        if (message.type ===
-            "ERROR") {
-            console.error("[Project-Vision] Varun error:", message.error);
-        }
+async function startAgent(prompt) {
+    const cleanPrompt = prompt.trim();
+    if (!cleanPrompt) {
+        return {
+            success: false,
+            error: "Prompt cannot be empty",
+        };
     }
-    catch (error) {
-        console.error("[Project-Vision] Invalid Varun message", error);
+    const requestId = crypto.randomUUID();
+    await addChatMessage(createChatMessage("user", {
+        type: "USER_PROMPT",
+        text: cleanPrompt,
+    }));
+    const promptSent = sendUserPromptToSrijan(requestId, cleanPrompt);
+    if (!promptSent) {
+        await addChatMessage(createChatMessage("system", {
+            text: "Could not send prompt: Srijan server is not connected.",
+            type: "CONNECTION_ERROR",
+        }));
+        return {
+            success: false,
+            error: "Srijan server is not connected",
+        };
     }
+    const activeTab = await getActiveTab();
+    if (!activeTab ||
+        typeof activeTab.id !==
+            "number") {
+        return {
+            success: false,
+            error: "No active browser tab found",
+        };
+    }
+    const screenshotSent = await sendRawScreenshotToSrijan(requestId, activeTab.id, 0, null);
+    if (!screenshotSent) {
+        await addChatMessage(createChatMessage("system", {
+            text: "Prompt was sent, but the initial screenshot could not be sent.",
+            type: "SCREENSHOT_ERROR",
+        }));
+        return {
+            success: false,
+            error: "Prompt was sent, but initial screenshot could not be sent",
+        };
+    }
+    return {
+        success: true,
+    };
+}
+async function localScreenshotTest() {
+    const activeTab = await getActiveTab();
+    if (!activeTab ||
+        typeof activeTab.id !==
+            "number") {
+        return {
+            success: false,
+            error: "No active browser tab found",
+        };
+    }
+    const requestId = crypto.randomUUID();
+    const sent = await sendRawScreenshotToSrijan(requestId, activeTab.id, 0, null);
+    return sent
+        ? { success: true }
+        : {
+            success: false,
+            error: "Failed to send screenshot",
+        };
+}
+async function demoAction() {
+    const activeTab = await getActiveTab();
+    if (!activeTab ||
+        typeof activeTab.id !==
+            "number") {
+        return {
+            success: false,
+            error: "No active browser tab found",
+        };
+    }
+    const requestId = crypto.randomUUID();
+    const actionId = crypto.randomUUID();
+    const action = {
+        action: "navigate",
+        url: "https://www.google.com",
+        step_index: 0,
+        is_last_step: true,
+    };
+    const message = {
+        type: "AGENT_ACTION",
+        request_id: requestId,
+        action_id: actionId,
+        tab_id: activeTab.id,
+        step_index: 0,
+        action,
+        is_last_step: true,
+    };
+    await executeAgentAction(message);
+    return {
+        success: true,
+    };
 }
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message ||
         typeof message !==
             "object") {
-        return false;
+        return;
     }
-    const msg = message;
-    if (msg.type ===
+    if (message.type ===
         "START_AGENT") {
-        void (async () => {
-            try {
-                const tab = await getActiveTab();
-                if (typeof tab.id !==
-                    "number") {
-                    throw new Error("Active tab has no id");
-                }
-                await waitForTabReady(tab.id);
-                const requestId = createRequestId();
-                await sendRawScreenshotToVarun(requestId, tab.id, 0, null);
-                sendResponse({
-                    success: true,
-                    request_id: requestId,
-                    tab_id: tab.id
-                });
-            }
-            catch (error) {
-                sendResponse({
-                    success: false,
-                    error: error instanceof Error
-                        ? error.message
-                        : String(error)
-                });
-            }
-        })();
-        return true;
-    }
-    if (msg.type ===
-        "DEMO_ACTION" &&
-        msg.action) {
-        const requestId = createRequestId();
-        const actionMessage = {
-            type: "AGENT_ACTION",
-            request_id: requestId,
-            action_id: "popup-demo",
-            step_index: msg.action.step_index,
-            action: msg.action,
-            is_last_step: msg.action.is_last_step
-        };
-        void executeAgentAction(actionMessage);
-        sendResponse({
-            success: true,
-            request_id: requestId
+        const prompt = typeof message.prompt ===
+            "string"
+            ? message.prompt
+            : "";
+        void startAgent(prompt)
+            .then(sendResponse)
+            .catch((error) => {
+            sendResponse({
+                success: false,
+                error: error instanceof Error
+                    ? error.message
+                    : String(error),
+            });
         });
         return true;
     }
-    return false;
+    if (message.type ===
+        "GET_CHAT_MESSAGES") {
+        void getChatMessages()
+            .then((messages) => {
+            sendResponse({
+                success: true,
+                messages,
+            });
+        })
+            .catch((error) => {
+            sendResponse({
+                success: false,
+                error: error instanceof Error
+                    ? error.message
+                    : String(error),
+            });
+        });
+        return true;
+    }
+    if (message.type ===
+        "CLEAR_CHAT") {
+        void saveChatMessages([])
+            .then(() => {
+            sendResponse({
+                success: true,
+            });
+        })
+            .catch((error) => {
+            sendResponse({
+                success: false,
+                error: error instanceof Error
+                    ? error.message
+                    : String(error),
+            });
+        });
+        return true;
+    }
+    if (message.type ===
+        "LOCAL_SCREENSHOT_TEST") {
+        void localScreenshotTest()
+            .then(sendResponse)
+            .catch((error) => {
+            sendResponse({
+                success: false,
+                error: error instanceof Error
+                    ? error.message
+                    : String(error),
+            });
+        });
+        return true;
+    }
+    if (message.type ===
+        "DEMO_ACTION") {
+        void demoAction()
+            .then(sendResponse)
+            .catch((error) => {
+            sendResponse({
+                success: false,
+                error: error instanceof Error
+                    ? error.message
+                    : String(error),
+            });
+        });
+        return true;
+    }
+    if (message.type ===
+        "LOCAL_CONTENT_ACTION") {
+        void (async () => {
+            const activeTab = await getActiveTab();
+            if (!activeTab ||
+                typeof activeTab.id !==
+                    "number") {
+                return {
+                    success: false,
+                    error: "No active browser tab found",
+                };
+            }
+            const action = message.action;
+            if (!validateAction(action)) {
+                return {
+                    success: false,
+                    error: "Invalid action",
+                };
+            }
+            await waitForTabReady(activeTab.id);
+            await ensureContentScript(activeTab.id);
+            return executeContentAction(action, activeTab.id);
+        })()
+            .then(sendResponse)
+            .catch((error) => {
+            sendResponse({
+                success: false,
+                error: error instanceof Error
+                    ? error.message
+                    : String(error),
+            });
+        });
+        return true;
+    }
 });
-connectSrijan();
-connectVarun();
+registerOffscreenListener();
+void setupOffscreenBridge();
+log("Background service worker started");

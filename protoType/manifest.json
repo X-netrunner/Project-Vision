@@ -3,19 +3,25 @@
   "name": "Project-Vision",
   "version": "1.0.0",
   "description": "Privacy-preserving visual browser agent.",
+
   "permissions": [
     "activeTab",
     "scripting",
-    "tabs"
+    "tabs",
+    "storage",
+    "offscreen"
   ],
+
   "host_permissions": [
     "<all_urls>"
   ],
+
   "action": {
     "default_popup": "popup.html"
   },
+
   "background": {
-  "service_worker": "dist/bg.js",
-  "type": "module"
-}
+    "service_worker": "dist/bg.js",
+    "type": "module"
+  }
 }

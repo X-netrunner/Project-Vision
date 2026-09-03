@@ -1,181 +1,278 @@
-const statusBox = document.getElementById("status");
-const startButton = document.getElementById("start");
-const demoButton = document.getElementById("demo");
+const messagesElement = document.getElementById("messages");
+const promptElement = document.getElementById("prompt");
+const sendButton = document.getElementById("send");
+const clearButton = document.getElementById("clear");
+const statusElement = document.getElementById("status");
 const screenshotButton = document.getElementById("screenshot");
-const clickButton = document.getElementById("click");
-const typeButton = document.getElementById("type");
-const enterButton = document.getElementById("enter");
-const scrollButton = document.getElementById("scroll");
-function setStatus(message) {
-    if (statusBox) {
-        statusBox.textContent =
-            message;
+const demoButton = document.getElementById("demo");
+function setStatus(text) {
+    statusElement.textContent =
+        text;
+}
+function createBubble(message) {
+    const wrapper = document.createElement("div");
+    wrapper.className =
+        `message-row ${message.sender}`;
+    const bubble = document.createElement("div");
+    bubble.className =
+        "message-bubble";
+    /*
+     * Sender label.
+     */
+    if (message.sender !==
+        "user") {
+        const label = document.createElement("div");
+        label.className =
+            "message-label";
+        if (message.sender ===
+            "server") {
+            label.textContent =
+                "Srijan";
+        }
+        else {
+            label.textContent =
+                "System";
+        }
+        bubble.appendChild(label);
+    }
+    /*
+     * Human-readable text.
+     */
+    if (message.text) {
+        const text = document.createElement("div");
+        text.className =
+            "message-text";
+        text.textContent =
+            message.text;
+        bubble.appendChild(text);
+    }
+    /*
+     * Screenshot.
+     *
+     * This is displayed if the received
+     * packet contains an image.
+     */
+    if (message.image) {
+        const image = document.createElement("img");
+        image.className =
+            "screenshot";
+        image.src =
+            message.image.startsWith("data:")
+                ? message.image
+                : `data:image/jpeg;base64,${message.image}`;
+        image.alt =
+            "Browser screenshot";
+        bubble.appendChild(image);
+    }
+    /*
+     * JSON display.
+     *
+     * The ORIGINAL JSON is displayed,
+     * not modified.
+     */
+    if (message.raw !==
+        undefined &&
+        message.type !==
+            "AGENT_ACTION") {
+        const details = document.createElement("details");
+        details.className =
+            "json-details";
+        const summary = document.createElement("summary");
+        summary.textContent =
+            "View JSON";
+        const pre = document.createElement("pre");
+        pre.textContent =
+            JSON.stringify(message.raw, null, 2);
+        details.appendChild(summary);
+        details.appendChild(pre);
+        bubble.appendChild(details);
+    }
+    /*
+     * Agent action JSON can also be viewed.
+     */
+    if (message.type ===
+        "AGENT_ACTION" &&
+        message.raw !==
+            undefined) {
+        const details = document.createElement("details");
+        details.className =
+            "json-details";
+        const summary = document.createElement("summary");
+        summary.textContent =
+            "View action JSON";
+        const pre = document.createElement("pre");
+        pre.textContent =
+            JSON.stringify(message.raw, null, 2);
+        details.appendChild(summary);
+        details.appendChild(pre);
+        bubble.appendChild(details);
+    }
+    wrapper.appendChild(bubble);
+    return wrapper;
+}
+function renderMessages(messages) {
+    messagesElement.innerHTML =
+        "";
+    for (const message of messages) {
+        messagesElement.appendChild(createBubble(message));
+    }
+    scrollToBottom();
+}
+function appendMessage(message) {
+    messagesElement.appendChild(createBubble(message));
+    scrollToBottom();
+}
+function scrollToBottom() {
+    messagesElement.scrollTop =
+        messagesElement.scrollHeight;
+}
+async function loadMessages() {
+    try {
+        const response = await chrome.runtime.sendMessage({
+            type: "GET_CHAT_MESSAGES",
+        });
+        if (!response?.success) {
+            setStatus("Could not load chat.");
+            return;
+        }
+        renderMessages(response.messages ?? []);
+    }
+    catch (error) {
+        setStatus(error instanceof Error
+            ? error.message
+            : String(error));
     }
 }
-async function getActiveTabId() {
-    const tabs = await chrome.tabs.query({
-        active: true,
-        currentWindow: true
-    });
-    if (!tabs[0] ||
-        typeof tabs[0].id !==
-            "number") {
-        throw new Error("No active tab");
+async function sendPrompt() {
+    const prompt = promptElement.value.trim();
+    if (!prompt) {
+        return;
     }
-    return tabs[0].id;
-}
-async function sendDemoAction(action) {
-    const response = await chrome.runtime.sendMessage({
-        type: "DEMO_ACTION",
-        action
-    });
-    if (!response?.success) {
-        throw new Error(response?.error ??
-            "Demo action failed");
+    promptElement.value =
+        "";
+    sendButton.disabled =
+        true;
+    setStatus("Sending to Srijan...");
+    try {
+        const response = await chrome.runtime.sendMessage({
+            type: "START_AGENT",
+            prompt,
+        });
+        if (response?.success) {
+            setStatus("Agent running...");
+        }
+        else {
+            setStatus(response?.error ??
+                "Failed to start agent.");
+        }
+    }
+    catch (error) {
+        setStatus(error instanceof Error
+            ? error.message
+            : String(error));
+    }
+    finally {
+        sendButton.disabled =
+            false;
+        promptElement.focus();
     }
 }
-if (startButton) {
-    startButton.addEventListener("click", async () => {
-        setStatus("Starting local screenshot test...");
-        try {
-            const response = await chrome.runtime.sendMessage({
-                type: "START_AGENT"
-            });
-            if (response?.success) {
-                setStatus("Screenshot sent to Varun. WebSocket must be running for this test.");
-            }
-            else {
-                setStatus(response?.error ??
-                    "Failed to start.");
-            }
+async function clearChat() {
+    try {
+        const response = await chrome.runtime.sendMessage({
+            type: "CLEAR_CHAT",
+        });
+        if (response?.success) {
+            messagesElement.innerHTML =
+                "";
+            setStatus("Chat cleared.");
         }
-        catch (error) {
-            setStatus(error instanceof Error
-                ? error.message
-                : String(error));
-        }
-    });
+    }
+    catch (error) {
+        setStatus(error instanceof Error
+            ? error.message
+            : String(error));
+    }
 }
-if (demoButton) {
-    demoButton.addEventListener("click", async () => {
-        setStatus("Running local example...");
-        try {
-            const tabId = await getActiveTabId();
-            const openAction = {
-                action: "open_tab",
-                url: "https://www.google.com",
-                step_index: 0,
-                is_last_step: true
-            };
-            await sendDemoAction(openAction);
-            setStatus(`Example command sent for tab ${tabId}.`);
+async function testScreenshot() {
+    setStatus("Capturing screenshot...");
+    try {
+        const response = await chrome.runtime.sendMessage({
+            type: "LOCAL_SCREENSHOT_TEST",
+        });
+        if (response?.success) {
+            setStatus("Screenshot sent.");
         }
-        catch (error) {
-            setStatus(error instanceof Error
-                ? error.message
-                : String(error));
+        else {
+            setStatus(response?.error ??
+                "Screenshot failed.");
         }
-    });
+    }
+    catch (error) {
+        setStatus(error instanceof Error
+            ? error.message
+            : String(error));
+    }
 }
-if (screenshotButton) {
-    screenshotButton.addEventListener("click", async () => {
-        setStatus("Testing screenshot capture...");
-        try {
-            const response = await chrome.runtime.sendMessage({
-                type: "LOCAL_SCREENSHOT_TEST"
-            });
-            if (response?.success) {
-                setStatus(`Screenshot OK. Base64 length: ${response.length}`);
-            }
-            else {
-                setStatus(response?.error ??
-                    "Screenshot failed.");
-            }
+async function runDemo() {
+    setStatus("Running demo...");
+    try {
+        const response = await chrome.runtime.sendMessage({
+            type: "DEMO_ACTION",
+        });
+        if (response?.success) {
+            setStatus("Demo executed.");
         }
-        catch (error) {
-            setStatus(error instanceof Error
-                ? error.message
-                : String(error));
+        else {
+            setStatus(response?.error ??
+                "Demo failed.");
         }
-    });
+    }
+    catch (error) {
+        setStatus(error instanceof Error
+            ? error.message
+            : String(error));
+    }
 }
-if (clickButton) {
-    clickButton.addEventListener("click", async () => {
-        setStatus("Sending local click test...");
-        try {
-            await sendDemoAction({
-                action: "click",
-                x: 825,
-                y: 360,
-                step_index: 0,
-                is_last_step: true
-            });
-            setStatus("Click command executed.");
-        }
-        catch (error) {
-            setStatus(error instanceof Error
-                ? error.message
-                : String(error));
-        }
-    });
-}
-if (typeButton) {
-    typeButton.addEventListener("click", async () => {
-        setStatus("Sending local type test...");
-        try {
-            await sendDemoAction({
-                action: "type",
-                text: "ISRO",
-                step_index: 0,
-                is_last_step: true
-            });
-            setStatus("Type command executed.");
-        }
-        catch (error) {
-            setStatus(error instanceof Error
-                ? error.message
-                : String(error));
-        }
-    });
-}
-if (enterButton) {
-    enterButton.addEventListener("click", async () => {
-        setStatus("Sending Enter test...");
-        try {
-            await sendDemoAction({
-                action: "press",
-                key: "Enter",
-                step_index: 0,
-                is_last_step: true
-            });
-            setStatus("Enter command executed.");
-        }
-        catch (error) {
-            setStatus(error instanceof Error
-                ? error.message
-                : String(error));
-        }
-    });
-}
-if (scrollButton) {
-    scrollButton.addEventListener("click", async () => {
-        setStatus("Sending scroll test...");
-        try {
-            await sendDemoAction({
-                action: "scroll",
-                direction: "down",
-                amount: 500,
-                step_index: 0,
-                is_last_step: true
-            });
-            setStatus("Scroll command executed.");
-        }
-        catch (error) {
-            setStatus(error instanceof Error
-                ? error.message
-                : String(error));
-        }
-    });
-}
-setStatus("Ready for local testing.");
+/*
+ * New JSON message from background.
+ */
+chrome.runtime.onMessage.addListener((message) => {
+    if (message?.type !==
+        "CHAT_MESSAGE") {
+        return;
+    }
+    const chatMessage = message.message;
+    appendMessage(chatMessage);
+    if (chatMessage.type ===
+        "CONNECTION_STATUS") {
+        setStatus(chatMessage.text ??
+            "");
+    }
+});
+/*
+ * Enter = send.
+ * Shift + Enter = newline.
+ */
+promptElement.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" &&
+        !event.shiftKey) {
+        event.preventDefault();
+        void sendPrompt();
+    }
+});
+sendButton.addEventListener("click", () => {
+    void sendPrompt();
+});
+clearButton.addEventListener("click", () => {
+    void clearChat();
+});
+screenshotButton.addEventListener("click", () => {
+    void testScreenshot();
+});
+demoButton.addEventListener("click", () => {
+    void runDemo();
+});
+void loadMessages();
+promptElement.focus();
 export {};

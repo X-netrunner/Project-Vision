@@ -9,9 +9,7 @@ export type BrowserAction =
   | "close_tab"
   | "switch_tab";
 
-export type ScrollDirection =
-  | "up"
-  | "down";
+export type ScrollDirection = "up" | "down";
 
 export interface ActionPayload {
   action: BrowserAction;
@@ -32,6 +30,14 @@ export interface ActionPayload {
   step_index: number;
   is_last_step: boolean;
 }
+
+/*
+ * ================================
+ * SRIJAN API - EXISTING
+ * ================================
+ *
+ * DO NOT MODIFY THESE STRUCTURES.
+ */
 
 export interface AgentActionMessage {
   type: "AGENT_ACTION";
@@ -65,6 +71,7 @@ export interface RawScreenshotMessage {
   step_index: number;
   image: string;
   action_result: ActionResult | null;
+  device_pixel_ratio?: number;
 }
 
 export interface RedactedScreenshotMessage {
@@ -82,10 +89,79 @@ export interface ErrorMessage {
   error: string;
 }
 
+/*
+ * ================================
+ * NEW USER PROMPT MESSAGE
+ * ================================
+ *
+ * This is the ONLY new Srijan-facing
+ * message.
+ */
+
+export interface UserPromptMessage {
+  type: "USER_PROMPT";
+  request_id: string;
+  prompt: string;
+}
+
+/*
+ * Messages received from Srijan.
+ *
+ * USER_PROMPT is NOT here because the
+ * extension sends it to Srijan.
+ */
 export type SrijanMessage =
   | AgentActionMessage
   | ErrorMessage;
 
+/*
+ * ================================
+ * VARUN API - EXISTING
+ * ================================
+ *
+ * Kept exactly as before.
+ *
+ * The actual Varun connection is currently
+ * disabled/commented out in bg.ts.
+ */
+
 export type VarunMessage =
   | RedactedScreenshotMessage
   | ErrorMessage;
+
+/*
+ * ================================
+ * INTERNAL EXTENSION CHAT TYPES
+ * ================================
+ *
+ * These are NOT sent to Srijan or Varun.
+ */
+
+export interface ChatMessage {
+  id: string;
+  sender: "user" | "server" | "system";
+  timestamp: number;
+
+  /*
+   * Original JSON received from the server.
+   * This lets the UI display/process the
+   * actual packet without modifying it.
+   */
+  raw?: unknown;
+
+  /*
+   * Human-readable text for the chat bubble.
+   */
+  text?: string;
+
+  /*
+   * Optional image when a screenshot packet
+   * is displayed.
+   */
+  image?: string;
+
+  /*
+   * Original packet type.
+   */
+  type?: string;
+}
