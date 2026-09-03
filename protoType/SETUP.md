@@ -1,56 +1,71 @@
 # Project-Vision setup
 
-## 1. Put the local server outside the extension folder
+## Folder layout
 
-Preferred layout:
+Load **only** `protoType/` into `chrome://extensions`:
 
 ```text
 Project-Vision/
-├── protoType/              <- load this folder in chrome://extensions
+├── protoType/              <- Chrome extension folder
 │   ├── manifest.json
 │   ├── dist/
 │   ├── native_host.py
-│   └── register-native-host.ps1
+│   └── install-native-host.*
 └── varun/
-    └── app.py              <- existing server
+    └── app.py              <- existing local server
 ```
 
-`native_host.py` automatically checks `varun/app.py` first.
+Keep `app.py` outside `protoType/`. The native host receives the project root from the OS launcher, starts `varun/app.py` automatically, and runs Python with `-B` plus `PYTHONDONTWRITEBYTECODE=1` so it does not create `__pycache__` for this launcher/server process.
 
-Python bytecode writes are disabled for the server process, so running it through Project-Vision does not create `__pycache__` in the extension folder.
+## Windows
 
-## 2. Load the extension
-
-Open `chrome://extensions`, enable Developer mode, and choose `protoType`.
-
-Copy the extension ID shown there.
-
-## 3. Register Native Messaging once
-
-In PowerShell:
+1. Load `Project-Vision/protoType` in `chrome://extensions`.
+2. Copy the Project-Vision **Extension ID**.
+3. In PowerShell:
 
 ```powershell
 cd "$HOME\Downloads\Project-Vision\protoType"
-.\setup-project-vision.ps1 -ExtensionId "YOUR_EXTENSION_ID"
+.\install-native-host.ps1 -ExtensionId "YOUR_EXTENSION_ID"
 ```
 
-Restart Chrome after registration.
+4. Restart Chrome and reload the extension.
 
-Native Messaging registration is an operating-system security requirement; the extension cannot register itself.
+## macOS
 
-## 4. Srijan
+1. Load `Project-Vision/protoType` in Chrome and copy its Extension ID.
+2. In Terminal:
 
-Enter the same WebSocket endpoint that you already use successfully, for example:
-
-```text
-wss://YOUR-NGROK-HOST.ngrok-free.app/ws
+```bash
+cd ~/Downloads/Project-Vision/protoType
+./install-native-host.sh "YOUR_EXTENSION_ID"
 ```
 
-The extension sends the existing Srijan packet structures unchanged.
+3. Restart Chrome and reload the extension.
 
-If Srijan accepts the TCP/WebSocket handshake and then closes the socket, inspect the extension service-worker console for:
+## Linux
 
-- `Srijan WebSocket status: open`
-- `Srijan WebSocket status: closed code: ... reason: ...`
+1. Load `Project-Vision/protoType` in Chrome and copy its Extension ID.
+2. In Terminal:
 
-A non-1000 close code/reason from that line is server-side protocol/policy information, not an ngrok reachability failure.
+```bash
+cd ~/Downloads/Project-Vision/protoType
+./install-native-host.sh "YOUR_EXTENSION_ID"
+```
+
+3. Restart Chrome and reload the extension.
+
+## Remove the native host
+
+Windows:
+
+```powershell
+.\uninstall-native-host.ps1
+```
+
+macOS/Linux:
+
+```bash
+./uninstall-native-host.sh
+```
+
+The Srijan WebSocket URL and existing Srijan/Varun API payloads are unchanged.

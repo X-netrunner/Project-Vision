@@ -1,29 +1,37 @@
-"""Chrome Native Messaging host for the prototype.
+"""Project-Vision Chrome Native Messaging host.
 
-Chrome starts this host on extension startup. The host starts the existing
-server app without changing its API or source. Native Messaging registration
-is OS-level configuration; all project code remains inside protoType/.
+Chrome starts this host when the extension asks for the registered native host.
+The host then starts the existing app.py without changing its API or protocol.
 """
 from __future__ import annotations
 
 import json
 import os
-import pathlib
+from pathlib import Path
 import struct
 import subprocess
 import sys
+
+# Never create __pycache__ for this launcher/host.
+os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 sys.dont_write_bytecode = True
 
-PROTO = pathlib.Path(__file__).resolve().parent
-ROOT = PROTO.parent
+HOST_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(os.environ.get("PROJECT_VISION_ROOT", HOST_DIR.parent)).resolve()
 
 
-def find_server_app() -> pathlib.Path:
-    candidates = [
-        ROOT / "varun" / "app.py",
-        ROOT / "app.py",
-        PROTO / "app.py",
-    ]
+def find_server_app() -> Path:
+    explicit = os.environ.get("PROJECT_VISION_APP")
+    candidates = []
+    if explicit:
+        candidates.append(Path(explicit).expanduser().resolve())
+    candidates.extend(
+        [
+            PROJECT_ROOT / "varun" / "app.py",
+            PROJECT_ROOT / "app.py",
+            PROJECT_ROOT / "protoType" / "app.py",
+        ]
+    )
     for candidate in candidates:
         if candidate.is_file():
             return candidate
@@ -31,9 +39,6 @@ def find_server_app() -> pathlib.Path:
     raise FileNotFoundError(
         "Could not find the existing app.py. Put it in one of these locations:\n" + checked
     )
-
-
-SERVER_APP = find_server_app()
 
 
 def send(message: dict) -> None:
@@ -55,15 +60,19 @@ def read_message() -> dict | None:
 
 
 def main() -> None:
-    if not SERVER_APP.exists():
-        send({"type": "SERVER_STATUS", "status": "error", "error": f"Missing {SERVER_APP}"})
+    try:
+        server_app = find_server_app()
+    except Exception as exc:
+        send({"type": "SERVER_STATUS", "status": "error", "error": str(exc)})
         return
 
     env = os.environ.copy()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+    # Keep the app's existing relative-path behavior intact.
     server = subprocess.Popen(
-        [sys.executable, str(SERVER_APP)],
-        cwd=str(SERVER_APP.parent),
+        [sys.executable, "-B", str(server_app)],
+        cwd=str(server_app.parent),
         env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
@@ -77,9 +86,18 @@ def main() -> None:
         if message is None:
             break
         if message.get("type") == "PING":
-            send({"type": "SERVER_STATUS", "status": "running", "pid": server.pid})
+            if server.poll() is None:
+                send({"type": "SERVER_STATUS", "status": "running", "pid": server.pid})
+            else:
+                send({
+                    "type": "SERVER_STATUS",
+                    "status": "exited",
+                    "pid": server.pid,
+                    "returncode": server.returncode,
+                })
         elif message.get("type") == "STOP":
-            server.terminate()
+            if server.poll() is None:
+                server.terminate()
             send({"type": "SERVER_STATUS", "status": "stopping"})
             break
 
