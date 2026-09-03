@@ -1,0 +1,33 @@
+# Text files
+plan.txt
+sop.txt
+team.txt
+topic.txt
+
+# Node dependencies
+/protoType/node_modules/
+node_modules/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Server directories & files (covers both "/server" and "Server[unnati&srijan]")
+/server/__pycache__/
+/server/screenshots/
+/server/logs/
+/server/*.txt
+/server/**/*.txt
+
+Server\[unnati&srijan\]/__pycache__/
+Server\[unnati&srijan\]/screenshots/
+Server\[unnati&srijan\]/logs/
+Server\[unnati&srijan\]/*.txt
+Server\[unnati&srijan\]/**/*.txt
+
+# Generic match for server folder variations
+[sS]erver*/__pycache__/
+[sS]erver*/screenshots/
+[sS]erver*/logs/
+[sS]erver*/*.txt
+[sS]erver*/**/*.txt
