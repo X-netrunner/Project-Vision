@@ -1,7 +1,8 @@
 (() => {
-  const globalState = globalThis as typeof globalThis & {
-    __projectVisionContentScriptLoaded?: boolean;
-  };
+  const globalState =
+    globalThis as typeof globalThis & {
+      __projectVisionContentScriptLoaded?: boolean;
+    };
 
   if (
     globalState.__projectVisionContentScriptLoaded
@@ -12,13 +13,6 @@
   globalState.__projectVisionContentScriptLoaded =
     true;
 
-  function getElementAtPoint(
-    x: number,
-    y: number
-  ): Element | null {
-    return document.elementFromPoint(x, y);
-  }
-
   function findClickableElement(
     element: Element | null
   ): HTMLElement | null {
@@ -26,203 +20,173 @@
       return null;
     }
 
-    const clickable = element.closest(
-      'button, a, input, textarea, select, [role="button"], [onclick], [tabindex]'
-    );
+    const clickable =
+      element.closest(
+        "button, a, input, textarea, select, [role='button'], [role='link'], [onclick]"
+      );
 
-    if (clickable instanceof HTMLElement) {
+    if (
+      clickable instanceof
+      HTMLElement
+    ) {
       return clickable;
     }
 
-    return element instanceof HTMLElement
-      ? element
-      : null;
+    if (
+      element instanceof
+      HTMLElement
+    ) {
+      return element;
+    }
+
+    return null;
   }
 
-  function clickAt(
+  function getElementAtPoint(
     x: number,
     y: number
+  ): HTMLElement | null {
+    const element =
+      document.elementFromPoint(
+        x,
+        y
+      );
+
+    return findClickableElement(
+      element
+    );
+  }
+
+  function click(
+    action: {
+      x?: number;
+      y?: number;
+    }
   ): {
     success: boolean;
     error?: string;
   } {
+    if (
+      typeof action.x !==
+        "number" ||
+      typeof action.y !==
+        "number"
+    ) {
+      return {
+        success: false,
+        error:
+          "x and y are required",
+      };
+    }
+
     const element =
-      getElementAtPoint(x, y);
+      getElementAtPoint(
+        action.x,
+        action.y
+      );
 
     if (!element) {
       return {
         success: false,
         error:
-          `No element found at (${x}, ${y})`,
+          "No clickable element found at coordinates",
       };
     }
 
-    const clickable =
-      findClickableElement(element);
-
-    if (!clickable) {
-      return {
-        success: false,
-        error:
-          `Element at (${x}, ${y}) is not clickable`,
-      };
-    }
-
-    clickable.click();
+    element.click();
 
     return {
       success: true,
     };
   }
 
-  function findTextInput():
-    HTMLElement | null {
-    const active =
-      document.activeElement;
-
-    if (
-      active instanceof HTMLInputElement ||
-      active instanceof HTMLTextAreaElement ||
-      (active instanceof HTMLElement &&
-        active.isContentEditable)
-    ) {
-      return active;
+  function typeText(
+    action: {
+      text?: string;
     }
-
-    const selectors = [
-      "input[type='search']",
-      "input[type='text']",
-      "textarea[name='q']",
-      "textarea[aria-label*='Search' i]",
-      "input[name='q']",
-      "input[aria-label*='Search' i]",
-      "textarea",
-      "input:not([type='hidden'])",
-    ];
-
-    for (const selector of selectors) {
-      const element =
-        document.querySelector(
-          selector
-        );
-
-      if (
-        element instanceof HTMLElement
-      ) {
-        return element;
-      }
-    }
-
-    return null;
-  }
-
-  function setInputValue(
-    element:
-      | HTMLInputElement
-      | HTMLTextAreaElement,
-    text: string
-  ): void {
-    const prototype =
-      element instanceof HTMLTextAreaElement
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype;
-
-    const descriptor =
-      Object.getOwnPropertyDescriptor(
-        prototype,
-        "value"
-      );
-
-    const setter =
-      descriptor?.set;
-
-    if (setter) {
-      setter.call(element, text);
-    } else {
-      element.value = text;
-    }
-
-    element.dispatchEvent(
-      new Event("input", {
-        bubbles: true,
-        composed: true,
-      })
-    );
-
-    element.dispatchEvent(
-      new Event("change", {
-        bubbles: true,
-        composed: true,
-      })
-    );
-  }
-
-  function typeIntoElement(
-    text: string,
-    x?: number,
-    y?: number
   ): {
     success: boolean;
     error?: string;
   } {
-    let element: HTMLElement | null =
-      null;
-
-    element = findTextInput();
-
     if (
-      !element &&
-      typeof x === "number" &&
-      typeof y === "number"
+      typeof action.text !==
+      "string"
     ) {
-      const at =
-        getElementAtPoint(x, y);
-
-      if (
-        at instanceof HTMLInputElement ||
-        at instanceof HTMLTextAreaElement ||
-        (at instanceof HTMLElement &&
-          at.isContentEditable)
-      ) {
-        element = at;
-      } else if (at) {
-        element =
-          at.closest(
-            "input, textarea, [contenteditable]"
-          ) as HTMLElement | null;
-      }
-    }
-
-    if (!element) {
       return {
         success: false,
         error:
-          "No supported input element found",
+          "text is required",
       };
     }
 
-    element.focus();
+    const active =
+      document.activeElement;
 
     if (
-      element instanceof HTMLInputElement ||
-      element instanceof HTMLTextAreaElement
+      active instanceof
+      HTMLInputElement ||
+      active instanceof
+      HTMLTextAreaElement
     ) {
-      setInputValue(element, text);
+      const prototype =
+        active instanceof
+        HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+
+      const descriptor =
+        Object.getOwnPropertyDescriptor(
+          prototype,
+          "value"
+        );
+
+      descriptor?.set?.call(
+        active,
+        action.text
+      );
+
+      active.dispatchEvent(
+        new Event(
+          "input",
+          {
+            bubbles: true,
+          }
+        )
+      );
+
+      active.dispatchEvent(
+        new Event(
+          "change",
+          {
+            bubbles: true,
+          }
+        )
+      );
 
       return {
         success: true,
       };
     }
 
-    if (element.isContentEditable) {
-      element.textContent = text;
+    if (
+      active instanceof
+      HTMLElement &&
+      active.isContentEditable
+    ) {
+      active.textContent =
+        action.text;
 
-      element.dispatchEvent(
-        new InputEvent("input", {
-          bubbles: true,
-          inputType: "insertText",
-          data: text,
-        })
+      active.dispatchEvent(
+        new InputEvent(
+          "input",
+          {
+            bubbles: true,
+            inputType:
+              "insertText",
+            data:
+              action.text,
+          }
+        )
       );
 
       return {
@@ -233,80 +197,102 @@
     return {
       success: false,
       error:
-        "Element is not a text input",
+        "No supported editable element is focused",
     };
   }
 
   function pressKey(
-    key: string
+    action: {
+      key?: string;
+    }
   ): {
     success: boolean;
     error?: string;
   } {
-    const target =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : document.body;
-
-    target.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key,
-        bubbles: true,
-        cancelable: true,
-      })
-    );
-
-    target.dispatchEvent(
-      new KeyboardEvent("keyup", {
-        key,
-        bubbles: true,
-        cancelable: true,
-      })
-    );
-
     if (
-      key === "Enter" &&
-      document.activeElement
+      typeof action.key !==
+      "string" ||
+      action.key.length ===
+        0
     ) {
-      const active =
-        document.activeElement;
-
-      const form =
-        active instanceof HTMLElement
-          ? active.closest("form")
-          : null;
-
-      if (form) {
-        if (
-          typeof form.requestSubmit === "function"
-        ) {
-          form.requestSubmit();
-        } else {
-          form.submit();
-        }
-      }
+      return {
+        success: false,
+        error:
+          "key is required",
+      };
     }
+
+    const target =
+      document.activeElement ??
+      document.body;
+
+    target.dispatchEvent(
+      new KeyboardEvent(
+        "keydown",
+        {
+          key:
+            action.key,
+          bubbles: true,
+          cancelable: true,
+        }
+      )
+    );
+
+    target.dispatchEvent(
+      new KeyboardEvent(
+        "keyup",
+        {
+          key:
+            action.key,
+          bubbles: true,
+          cancelable: true,
+        }
+      )
+    );
 
     return {
       success: true,
     };
   }
 
-  function scrollPage(
-    direction: "up" | "down",
-    amount: number
+  function scroll(
+    action: {
+      direction?: "up" | "down";
+      amount?: number;
+    }
   ): {
     success: boolean;
     error?: string;
   } {
+    if (
+      (
+        action.direction !==
+          "up" &&
+        action.direction !==
+          "down"
+      ) ||
+      typeof action.amount !==
+        "number"
+    ) {
+      return {
+        success: false,
+        error:
+          "direction and amount are required",
+      };
+    }
+
     const distance =
-      direction === "down"
-        ? amount
-        : -amount;
+      action.direction ===
+      "down"
+        ? action.amount
+        : -action.amount;
 
     window.scrollBy({
-      top: distance,
-      behavior: "smooth",
+      top:
+        distance,
+      left: 0,
+      behavior:
+        "smooth",
     });
 
     return {
@@ -320,15 +306,13 @@
       _sender,
       sendResponse
     ) => {
-      if (
-        !message ||
-        typeof message !== "object"
-      ) {
+      if (!message) {
         return;
       }
 
       if (
-        message.type === "PING"
+        message.type ===
+        "PING"
       ) {
         sendResponse({
           success: true,
@@ -338,7 +322,8 @@
       }
 
       if (
-        message.type !== "AGENT_ACTION"
+        message.type !==
+        "AGENT_ACTION"
       ) {
         return;
       }
@@ -346,75 +331,63 @@
       const action =
         message.action;
 
-      if (
-        !action ||
-        typeof action.action !== "string"
-      ) {
+      if (!action) {
         sendResponse({
           success: false,
-          error: "Invalid action",
+          error:
+            "Missing action",
         });
 
         return;
       }
 
-      try {
-        let result: {
-          success: boolean;
-          error?: string;
-        };
+      let result: {
+        success: boolean;
+        error?: string;
+      };
 
-        switch (action.action) {
-          case "click":
-            result = clickAt(
-              action.x,
-              action.y
+      switch (
+        action.action
+      ) {
+        case "click":
+          result =
+            click(
+              action
             );
-            break;
+          break;
 
-          case "type":
-            result =
-              typeIntoElement(
-                action.text,
-                action.x,
-                action.y
-              );
-            break;
+        case "type":
+          result =
+            typeText(
+              action
+            );
+          break;
 
-          case "press":
-            result =
-              pressKey(
-                action.key
-              );
-            break;
+        case "press":
+          result =
+            pressKey(
+              action
+            );
+          break;
 
-          case "scroll":
-            result =
-              scrollPage(
-                action.direction,
-                action.amount
-              );
-            break;
+        case "scroll":
+          result =
+            scroll(
+              action
+            );
+          break;
 
-          default:
-            result = {
-              success: false,
-              error:
-                `Action "${action.action}" ` +
-                "must be handled by the background service worker",
-            };
-        }
-
-        sendResponse(result);
-      } catch (error) {
-        sendResponse({
-          success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : String(error),
-        });
+        default:
+          result = {
+            success: false,
+            error:
+              "Unsupported content action",
+          };
       }
+
+      sendResponse(
+        result
+      );
     }
   );
 

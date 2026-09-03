@@ -1,10 +1,28 @@
 import { validateAction } from "./actions/validator.js";
 import { executeContentAction } from "./actions/executor.js";
-const SRIJAN_WS_URL = "ws://127.0.0.1:8001/ws";
-// const VARUN_WS_URL = "YOUR_EXISTING_VARUN_WS_URL";
-// let varunSocket: WebSocket | null = null;
-let offscreenPort = null;
-const OFFSCREEN_URL = "offscreen.html";
+/*
+ * ============================================================
+ * EXISTING SERVER CONNECTIONS
+ * ============================================================
+ */
+const SRIJAN_WS_URL = "ws://10.67.21.46:8001/ws";
+const VARUN_WS_URL = "ws://127.0.0.1:8000/ws";
+/*
+ * ============================================================
+ * WEBSOCKETS
+ * ============================================================
+ */
+let srijanSocket = null;
+let varunSocket = null;
+let srijanReconnectTimer = null;
+let varunReconnectTimer = null;
+let srijanReconnecting = false;
+let varunReconnecting = false;
+/*
+ * ============================================================
+ * CHAT STORAGE
+ * ============================================================
+ */
 const CHAT_STORAGE_KEY = "projectVisionChatMessages";
 const MAX_CHAT_MESSAGES = 100;
 async function getChatMessages() {
@@ -32,6 +50,7 @@ async function addChatMessage(message) {
         });
     }
     catch {
+        // Popup may not be open.
     }
 }
 function createChatMessage(sender, options) {
@@ -42,19 +61,28 @@ function createChatMessage(sender, options) {
         ...options,
     };
 }
+/*
+ * ============================================================
+ * LOGGING
+ * ============================================================
+ */
 function log(...args) {
     console.log("[Project-Vision]", ...args);
 }
+/*
+ * ============================================================
+ * SRIJAN SOCKET
+ * ============================================================
+ */
 function sendToSrijan(message) {
-    if (!offscreenPort) {
-        log("Srijan WebSocket bridge is not connected");
+    if (!srijanSocket ||
+        srijanSocket.readyState !==
+            WebSocket.OPEN) {
+        log("Srijan WebSocket is not connected");
         return false;
     }
     try {
-        offscreenPort.postMessage({
-            type: "WS_SEND",
-            data: JSON.stringify(message),
-        });
+        srijanSocket.send(JSON.stringify(message));
         return true;
     }
     catch (error) {
@@ -62,57 +90,157 @@ function sendToSrijan(message) {
         return false;
     }
 }
-async function ensureOffscreenDocument() {
+function connectToSrijan() {
+    if (srijanSocket &&
+        (srijanSocket.readyState ===
+            WebSocket.OPEN ||
+            srijanSocket.readyState ===
+                WebSocket.CONNECTING)) {
+        return;
+    }
+    if (srijanReconnecting) {
+        return;
+    }
+    srijanReconnecting = true;
+    log("Connecting to Srijan:", SRIJAN_WS_URL);
     try {
-        await chrome.offscreen.createDocument({
-            url: OFFSCREEN_URL,
-            reasons: ["BLOBS"],
-            justification: "Keep an idle-persistent WebSocket connection to the Project-Vision server alive across service-worker evictions.",
-        });
+        const socket = new WebSocket(SRIJAN_WS_URL);
+        srijanSocket =
+            socket;
+        socket.onopen = () => {
+            srijanReconnecting = false;
+            log("Connected to Srijan");
+            void addChatMessage(createChatMessage("system", {
+                text: "Connected to Srijan.",
+                type: "CONNECTION_STATUS",
+            }));
+        };
+        socket.onmessage = (event) => {
+            void handleSrijanMessage(event.data);
+        };
+        socket.onerror = (event) => {
+            log("Srijan WebSocket error:", event);
+        };
+        socket.onclose = () => {
+            srijanReconnecting = false;
+            if (srijanSocket === socket) {
+                srijanSocket = null;
+            }
+            log("Srijan WebSocket closed");
+            void addChatMessage(createChatMessage("system", {
+                text: "Disconnected from Srijan. Reconnecting...",
+                type: "CONNECTION_STATUS",
+            }));
+            scheduleSrijanReconnect();
+        };
     }
     catch (error) {
-        // Only a single offscreen document may exist; treat "already
-        // present" errors as success.
-        log("Offscreen document create (may already exist):", error);
+        srijanReconnecting = false;
+        log("Failed to connect to Srijan:", error);
+        scheduleSrijanReconnect();
     }
 }
-function registerOffscreenListener() {
-    chrome.runtime.onConnect.addListener((port) => {
-        if (port.name !== "offscreen") {
-            return;
-        }
-        log("Offscreen bridge connected.");
-        offscreenPort = port;
-        port.onMessage.addListener((message) => {
-            const msg = message;
-            if (msg?.type === "WS_MSG" &&
-                typeof msg.data === "string") {
-                void handleSrijanMessage(msg.data).catch((error) => {
-                    log("Unhandled error processing Srijan message:", error);
-                });
-                return;
-            }
-            if (msg?.type === "WS_STATUS") {
-                log("Srijan WebSocket status:", msg
-                    .status);
-            }
-        });
-        port.onDisconnect.addListener(() => {
-            log("Offscreen bridge disconnected.");
-            if (offscreenPort === port) {
-                offscreenPort = null;
-            }
-        });
-    });
+function scheduleSrijanReconnect() {
+    if (srijanReconnectTimer !== null) {
+        return;
+    }
+    srijanReconnectTimer =
+        setTimeout(() => {
+            srijanReconnectTimer = null;
+            connectToSrijan();
+        }, 3000);
 }
-async function setupOffscreenBridge() {
+/*
+ * ============================================================
+ * VARUN SOCKET
+ * ============================================================
+ *
+ * IMPORTANT:
+ * RAW_SCREENSHOT goes ONLY to Varun.
+ * REDACTED_SCREENSHOT comes back from Varun
+ * and is then forwarded to Srijan.
+ */
+function sendToVarun(message) {
+    if (!varunSocket ||
+        varunSocket.readyState !==
+            WebSocket.OPEN) {
+        log("Varun WebSocket is not connected");
+        return false;
+    }
     try {
-        await ensureOffscreenDocument();
+        varunSocket.send(JSON.stringify(message));
+        return true;
     }
     catch (error) {
-        log("Failed to set up offscreen bridge:", error);
+        log("Failed to send message to Varun:", error);
+        return false;
     }
 }
+function connectToVarun() {
+    if (varunSocket &&
+        (varunSocket.readyState ===
+            WebSocket.OPEN ||
+            varunSocket.readyState ===
+                WebSocket.CONNECTING)) {
+        return;
+    }
+    if (varunReconnecting) {
+        return;
+    }
+    varunReconnecting = true;
+    log("Connecting to Varun:", VARUN_WS_URL);
+    try {
+        const socket = new WebSocket(VARUN_WS_URL);
+        varunSocket =
+            socket;
+        socket.onopen = () => {
+            varunReconnecting = false;
+            log("Connected to Varun");
+            void addChatMessage(createChatMessage("system", {
+                text: "Connected to Varun.",
+                type: "CONNECTION_STATUS",
+            }));
+        };
+        socket.onmessage = (event) => {
+            void handleVarunMessage(event.data);
+        };
+        socket.onerror = (event) => {
+            log("Varun WebSocket error:", event);
+        };
+        socket.onclose = () => {
+            varunReconnecting = false;
+            if (varunSocket === socket) {
+                varunSocket = null;
+            }
+            log("Varun WebSocket closed");
+            void addChatMessage(createChatMessage("system", {
+                text: "Disconnected from Varun. Reconnecting...",
+                type: "CONNECTION_STATUS",
+            }));
+            scheduleVarunReconnect();
+        };
+    }
+    catch (error) {
+        varunReconnecting = false;
+        log("Failed to connect to Varun:", error);
+        scheduleVarunReconnect();
+    }
+}
+function scheduleVarunReconnect() {
+    if (varunReconnectTimer !== null) {
+        return;
+    }
+    varunReconnectTimer =
+        setTimeout(() => {
+            varunReconnectTimer = null;
+            connectToVarun();
+        }, 3000);
+}
+/*
+ * ============================================================
+ * TAB HELPERS
+ * ============================================================
+ */
 async function getActiveTab() {
     const tabs = await chrome.tabs.query({
         active: true,
@@ -159,6 +287,11 @@ async function ensureContentScript(tabId) {
         ],
     });
 }
+/*
+ * ============================================================
+ * SCREENSHOT
+ * ============================================================
+ */
 async function captureScreenshot(tabId) {
     const tab = await chrome.tabs.get(tabId);
     const url = tab.url ?? "";
@@ -190,42 +323,13 @@ async function captureScreenshot(tabId) {
     });
 }
 /*
-async function sendRawScreenshotToVarun(
-  message: RawScreenshotMessage
-): Promise<boolean> {
-  if (
-    !varunSocket ||
-    varunSocket.readyState !== WebSocket.OPEN
-  ) {
-    return false;
-  }
-
-  varunSocket.send(
-    JSON.stringify(message)
-  );
-
-  return true;
-}
-*/
-async function getDevicePixelRatio(tabId) {
-    try {
-        const results = await chrome.scripting.executeScript({
-            target: { tabId },
-            func: () => window.devicePixelRatio,
-        });
-        const value = results?.[0]?.result;
-        return typeof value === "number" && value > 0
-            ? value
-            : 1;
-    }
-    catch {
-        return 1;
-    }
-}
-async function sendRawScreenshotToSrijan(requestId, tabId, stepIndex, actionResult) {
+ * ============================================================
+ * SCREENSHOT -> VARUN
+ * ============================================================
+ */
+async function sendRawScreenshotToVarun(requestId, tabId, stepIndex, actionResult) {
     try {
         const image = await captureScreenshot(tabId);
-        const devicePixelRatio = await getDevicePixelRatio(tabId);
         const message = {
             type: "RAW_SCREENSHOT",
             request_id: requestId,
@@ -233,9 +337,20 @@ async function sendRawScreenshotToSrijan(requestId, tabId, stepIndex, actionResu
             step_index: stepIndex,
             image,
             action_result: actionResult,
-            device_pixel_ratio: devicePixelRatio,
         };
-        return sendToSrijan(message);
+        /*
+         * IMPORTANT:
+         *
+         * This is the ONLY place the raw screenshot
+         * leaves the extension.
+         *
+         * It goes to Varun, NOT Srijan.
+         */
+        const sent = sendToVarun(message);
+        if (!sent) {
+            sendErrorToSrijan(requestId, "Varun server is not connected");
+        }
+        return sent;
     }
     catch (error) {
         sendErrorToSrijan(requestId, error instanceof Error
@@ -244,6 +359,105 @@ async function sendRawScreenshotToSrijan(requestId, tabId, stepIndex, actionResu
         return false;
     }
 }
+/*
+ * ============================================================
+ * VARUN -> SRIJAN
+ * ============================================================
+ */
+async function handleVarunMessage(rawData) {
+    try {
+        let parsed;
+        if (typeof rawData === "string") {
+            parsed =
+                JSON.parse(rawData);
+        }
+        else {
+            parsed =
+                rawData;
+        }
+        const packet = parsed;
+        /*
+         * Varun successfully redacted the screenshot.
+         *
+         * ONLY NOW does the screenshot get forwarded
+         * to Srijan.
+         */
+        if (packet?.type ===
+            "REDACTED_SCREENSHOT") {
+            const redacted = parsed;
+            await addChatMessage(createChatMessage("system", {
+                type: "REDACTED_SCREENSHOT",
+                text: "Varun returned a redacted screenshot.",
+                image: redacted.image,
+                raw: parsed,
+            }));
+            const sent = sendToSrijan(redacted);
+            if (!sent) {
+                log("Could not forward redacted screenshot to Srijan.");
+            }
+            return;
+        }
+        /*
+         * Varun error.
+         */
+        if (packet?.type ===
+            "ERROR") {
+            await addChatMessage(createChatMessage("system", {
+                type: "ERROR",
+                raw: parsed,
+                text: typeof packet.error ===
+                    "string"
+                    ? packet.error
+                    : "Varun server error",
+            }));
+            /*
+             * Preserve existing ERROR structure
+             * when forwarding to Srijan.
+             */
+            sendToSrijan({
+                type: "ERROR",
+                ...(typeof packet.request_id ===
+                    "string"
+                    ? {
+                        request_id: packet.request_id,
+                    }
+                    : {}),
+                error: typeof packet.error ===
+                    "string"
+                    ? packet.error
+                    : "Varun server error",
+            });
+            return;
+        }
+        /*
+         * Unknown Varun JSON.
+         */
+        await addChatMessage(createChatMessage("system", {
+            type: typeof packet?.type ===
+                "string"
+                ? packet.type
+                : "VARUN_JSON",
+            raw: parsed,
+            text: JSON.stringify(parsed, null, 2),
+        }));
+    }
+    catch (error) {
+        const errorText = error instanceof Error
+            ? error.message
+            : String(error);
+        log("Failed to process Varun JSON:", error);
+        await addChatMessage(createChatMessage("system", {
+            type: "VARUN_JSON_PARSE_ERROR",
+            text: `Failed to process Varun JSON: ${errorText}`,
+        }));
+        sendErrorToSrijan(undefined, errorText);
+    }
+}
+/*
+ * ============================================================
+ * SRIJAN MESSAGES
+ * ============================================================
+ */
 function sendActionResultToSrijan(requestId, actionId, result) {
     const message = {
         type: "ACTION_RESULT",
@@ -273,6 +487,77 @@ function sendUserPromptToSrijan(requestId, prompt) {
     };
     return sendToSrijan(message);
 }
+async function handleSrijanMessage(rawData) {
+    try {
+        let parsed;
+        if (typeof rawData === "string") {
+            parsed =
+                JSON.parse(rawData);
+        }
+        else {
+            parsed =
+                rawData;
+        }
+        const packet = parsed;
+        /*
+         * Srijan tells extension what action to execute.
+         */
+        if (packet?.type ===
+            "AGENT_ACTION") {
+            await addChatMessage(createChatMessage("server", {
+                type: "AGENT_ACTION",
+                raw: parsed,
+                text: `Agent action: ${String(packet.action?.action ??
+                    "unknown")}`,
+            }));
+            await executeAgentAction(parsed);
+            return;
+        }
+        /*
+         * Srijan ERROR.
+         */
+        if (packet?.type ===
+            "ERROR") {
+            await addChatMessage(createChatMessage("server", {
+                type: "ERROR",
+                raw: parsed,
+                text: typeof packet.error ===
+                    "string"
+                    ? packet.error
+                    : "Server error",
+            }));
+            return;
+        }
+        /*
+         * Display any other JSON received
+         * from Srijan in the UI.
+         */
+        await addChatMessage(createChatMessage("server", {
+            type: typeof packet?.type ===
+                "string"
+                ? packet.type
+                : "JSON",
+            raw: parsed,
+            text: JSON.stringify(parsed, null, 2),
+        }));
+    }
+    catch (error) {
+        const errorText = error instanceof Error
+            ? error.message
+            : String(error);
+        log("Failed to process Srijan JSON:", error);
+        await addChatMessage(createChatMessage("system", {
+            type: "JSON_PARSE_ERROR",
+            text: `Failed to process server JSON: ${errorText}`,
+        }));
+        sendErrorToSrijan(undefined, errorText);
+    }
+}
+/*
+ * ============================================================
+ * BACKGROUND BROWSER ACTIONS
+ * ============================================================
+ */
 async function executeBackgroundAction(action, tabId) {
     try {
         switch (action.action) {
@@ -390,6 +675,11 @@ async function executeBackgroundAction(action, tabId) {
         };
     }
 }
+/*
+ * ============================================================
+ * EXECUTE AGENT ACTION
+ * ============================================================
+ */
 async function executeAgentAction(message) {
     const action = message.action;
     if (!validateAction(action)) {
@@ -448,73 +738,26 @@ async function executeAgentAction(message) {
             };
         }
     }
+    /*
+     * Existing ACTION_RESULT -> Srijan.
+     */
     sendActionResultToSrijan(message.request_id, message.action_id, result);
+    /*
+     * IMPORTANT:
+     *
+     * Screenshot is now sent to Varun,
+     * NOT directly to Srijan.
+     */
     if (result.success &&
         !message.is_last_step) {
-        try {
-            await sendRawScreenshotToSrijan(message.request_id, tabId, action.step_index, result);
-        }
-        catch (error) {
-            log("Failed to send screenshot after action:", error);
-        }
+        await sendRawScreenshotToVarun(message.request_id, tabId, action.step_index, result);
     }
 }
-async function handleSrijanMessage(rawData) {
-    try {
-        let parsed;
-        if (typeof rawData === "string") {
-            parsed =
-                JSON.parse(rawData);
-        }
-        else {
-            parsed =
-                rawData;
-        }
-        const packet = parsed;
-        if (packet?.type ===
-            "AGENT_ACTION") {
-            await addChatMessage(createChatMessage("server", {
-                type: "AGENT_ACTION",
-                raw: parsed,
-                text: `Agent action: ${String(packet.action?.action ??
-                    "unknown")}`,
-            }));
-            await executeAgentAction(parsed);
-            return;
-        }
-        if (packet?.type ===
-            "ERROR") {
-            await addChatMessage(createChatMessage("server", {
-                type: "ERROR",
-                raw: parsed,
-                text: typeof packet.error ===
-                    "string"
-                    ? packet.error
-                    : "Server error",
-            }));
-            return;
-        }
-        await addChatMessage(createChatMessage("server", {
-            type: typeof packet?.type ===
-                "string"
-                ? packet.type
-                : "JSON",
-            raw: parsed,
-            text: JSON.stringify(parsed, null, 2),
-        }));
-    }
-    catch (error) {
-        const errorText = error instanceof Error
-            ? error.message
-            : String(error);
-        log("Failed to process Srijan JSON:", error);
-        await addChatMessage(createChatMessage("system", {
-            type: "JSON_PARSE_ERROR",
-            text: `Failed to process server JSON: ${errorText}`,
-        }));
-        sendErrorToSrijan(undefined, errorText);
-    }
-}
+/*
+ * ============================================================
+ * START AGENT
+ * ============================================================
+ */
 async function startAgent(prompt) {
     const cleanPrompt = prompt.trim();
     if (!cleanPrompt) {
@@ -528,6 +771,9 @@ async function startAgent(prompt) {
         type: "USER_PROMPT",
         text: cleanPrompt,
     }));
+    /*
+     * Existing/new prompt packet to Srijan.
+     */
     const promptSent = sendUserPromptToSrijan(requestId, cleanPrompt);
     if (!promptSent) {
         await addChatMessage(createChatMessage("system", {
@@ -548,21 +794,29 @@ async function startAgent(prompt) {
             error: "No active browser tab found",
         };
     }
-    const screenshotSent = await sendRawScreenshotToSrijan(requestId, activeTab.id, 0, null);
+    /*
+     * Initial screenshot also goes to Varun.
+     */
+    const screenshotSent = await sendRawScreenshotToVarun(requestId, activeTab.id, 0, null);
     if (!screenshotSent) {
         await addChatMessage(createChatMessage("system", {
-            text: "Prompt was sent, but the initial screenshot could not be sent.",
+            text: "Prompt was sent, but the initial screenshot could not be sent to Varun.",
             type: "SCREENSHOT_ERROR",
         }));
         return {
             success: false,
-            error: "Prompt was sent, but initial screenshot could not be sent",
+            error: "Prompt was sent, but initial screenshot could not be sent to Varun",
         };
     }
     return {
         success: true,
     };
 }
+/*
+ * ============================================================
+ * LOCAL SCREENSHOT TEST
+ * ============================================================
+ */
 async function localScreenshotTest() {
     const activeTab = await getActiveTab();
     if (!activeTab ||
@@ -574,14 +828,21 @@ async function localScreenshotTest() {
         };
     }
     const requestId = crypto.randomUUID();
-    const sent = await sendRawScreenshotToSrijan(requestId, activeTab.id, 0, null);
+    const sent = await sendRawScreenshotToVarun(requestId, activeTab.id, 0, null);
     return sent
-        ? { success: true }
+        ? {
+            success: true,
+        }
         : {
             success: false,
-            error: "Failed to send screenshot",
+            error: "Failed to send screenshot to Varun",
         };
 }
+/*
+ * ============================================================
+ * DEMO ACTION
+ * ============================================================
+ */
 async function demoAction() {
     const activeTab = await getActiveTab();
     if (!activeTab ||
@@ -614,6 +875,11 @@ async function demoAction() {
         success: true,
     };
 }
+/*
+ * ============================================================
+ * RUNTIME MESSAGES
+ * ============================================================
+ */
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message ||
         typeof message !==
@@ -738,6 +1004,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return true;
     }
 });
-registerOffscreenListener();
-void setupOffscreenBridge();
+/*
+ * ============================================================
+ * STARTUP
+ * ============================================================
+ */
+connectToSrijan();
+connectToVarun();
 log("Background service worker started");

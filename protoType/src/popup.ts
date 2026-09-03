@@ -1,6 +1,15 @@
-import type {
-  ChatMessage,
-} from "./types.js";
+interface ChatMessage {
+  id: string;
+  sender:
+    | "user"
+    | "server"
+    | "system";
+  timestamp: number;
+  raw?: unknown;
+  text?: string;
+  image?: string;
+  type?: string;
+}
 
 const messagesElement =
   document.getElementById(
@@ -14,37 +23,29 @@ const promptElement =
 
 const sendButton =
   document.getElementById(
-    "send"
+    "sendBtn"
   ) as HTMLButtonElement;
 
 const clearButton =
   document.getElementById(
-    "clear"
+    "clearBtn"
   ) as HTMLButtonElement;
 
-const statusElement =
-  document.getElementById(
-    "status"
-  ) as HTMLDivElement;
-
-const screenshotButton =
-  document.getElementById(
-    "screenshot"
-  ) as HTMLButtonElement;
-
-const demoButton =
-  document.getElementById(
-    "demo"
-  ) as HTMLButtonElement;
-
-function setStatus(
-  text: string
-): void {
-  statusElement.textContent =
-    text;
+function escapeHtml(
+  value: string
+): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll(
+      "'",
+      "&#039;"
+    );
 }
 
-function createBubble(
+function renderMessage(
   message: ChatMessage
 ): HTMLDivElement {
   const wrapper =
@@ -53,7 +54,19 @@ function createBubble(
     );
 
   wrapper.className =
-    `message-row ${message.sender}`;
+    `message ${message.sender}`;
+
+  const type =
+    document.createElement(
+      "div"
+    );
+
+  type.className =
+    "type";
+
+  type.textContent =
+    message.type ??
+    message.sender;
 
   const bubble =
     document.createElement(
@@ -61,67 +74,20 @@ function createBubble(
     );
 
   bubble.className =
-    "message-bubble";
+    "bubble";
 
-  /*
-   * Sender label.
-   */
-  if (
-    message.sender !==
-    "user"
-  ) {
-    const label =
-      document.createElement(
-        "div"
-      );
+  bubble.textContent =
+    message.text ??
+    "";
 
-    label.className =
-      "message-label";
+  wrapper.appendChild(
+    type
+  );
 
-    if (
-      message.sender ===
-      "server"
-    ) {
-      label.textContent =
-        "Srijan";
-    } else {
-      label.textContent =
-        "System";
-    }
+  wrapper.appendChild(
+    bubble
+  );
 
-    bubble.appendChild(
-      label
-    );
-  }
-
-  /*
-   * Human-readable text.
-   */
-  if (
-    message.text
-  ) {
-    const text =
-      document.createElement(
-        "div"
-      );
-
-    text.className =
-      "message-text";
-
-    text.textContent =
-      message.text;
-
-    bubble.appendChild(
-      text
-    );
-  }
-
-  /*
-   * Screenshot.
-   *
-   * This is displayed if the received
-   * packet contains an image.
-   */
   if (
     message.image
   ) {
@@ -141,32 +107,21 @@ function createBubble(
         : `data:image/jpeg;base64,${message.image}`;
 
     image.alt =
-      "Browser screenshot";
+      "Screenshot";
 
     bubble.appendChild(
       image
     );
   }
 
-  /*
-   * JSON display.
-   *
-   * The ORIGINAL JSON is displayed,
-   * not modified.
-   */
   if (
     message.raw !==
-      undefined &&
-    message.type !==
-      "AGENT_ACTION"
+    undefined
   ) {
     const details =
       document.createElement(
         "details"
       );
-
-    details.className =
-      "json-details";
 
     const summary =
       document.createElement(
@@ -181,12 +136,19 @@ function createBubble(
         "pre"
       );
 
-    pre.textContent =
-      JSON.stringify(
-        message.raw,
-        null,
-        2
-      );
+    try {
+      pre.textContent =
+        JSON.stringify(
+          message.raw,
+          null,
+          2
+        );
+    } catch {
+      pre.textContent =
+        String(
+          message.raw
+        );
+    }
 
     details.appendChild(
       summary
@@ -200,60 +162,6 @@ function createBubble(
       details
     );
   }
-
-  /*
-   * Agent action JSON can also be viewed.
-   */
-  if (
-    message.type ===
-      "AGENT_ACTION" &&
-    message.raw !==
-      undefined
-  ) {
-    const details =
-      document.createElement(
-        "details"
-      );
-
-    details.className =
-      "json-details";
-
-    const summary =
-      document.createElement(
-        "summary"
-      );
-
-    summary.textContent =
-      "View action JSON";
-
-    const pre =
-      document.createElement(
-        "pre"
-      );
-
-    pre.textContent =
-      JSON.stringify(
-        message.raw,
-        null,
-        2
-      );
-
-    details.appendChild(
-      summary
-    );
-
-    details.appendChild(
-      pre
-    );
-
-    bubble.appendChild(
-      details
-    );
-  }
-
-  wrapper.appendChild(
-    bubble
-  );
 
   return wrapper;
 }
@@ -268,54 +176,31 @@ function renderMessages(
     const message of messages
   ) {
     messagesElement.appendChild(
-      createBubble(message)
+      renderMessage(
+        message
+      )
     );
   }
 
-  scrollToBottom();
-}
-
-function appendMessage(
-  message: ChatMessage
-): void {
-  messagesElement.appendChild(
-    createBubble(message)
-  );
-
-  scrollToBottom();
-}
-
-function scrollToBottom(): void {
   messagesElement.scrollTop =
     messagesElement.scrollHeight;
 }
 
 async function loadMessages(): Promise<void> {
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "GET_CHAT_MESSAGES",
-      });
+  const response =
+    await chrome.runtime.sendMessage({
+      type:
+        "GET_CHAT_MESSAGES",
+    });
 
-    if (
-      !response?.success
-    ) {
-      setStatus(
-        "Could not load chat."
-      );
-
-      return;
-    }
-
+  if (
+    response?.success &&
+    Array.isArray(
+      response.messages
+    )
+  ) {
     renderMessages(
-      response.messages ?? []
-    );
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
+      response.messages
     );
   }
 }
@@ -328,15 +213,8 @@ async function sendPrompt(): Promise<void> {
     return;
   }
 
-  promptElement.value =
-    "";
-
   sendButton.disabled =
     true;
-
-  setStatus(
-    "Sending to Srijan..."
-  );
 
   try {
     const response =
@@ -347,22 +225,22 @@ async function sendPrompt(): Promise<void> {
       });
 
     if (
-      response?.success
+      !response?.success
     ) {
-      setStatus(
-        "Agent running..."
-      );
-    } else {
-      setStatus(
+      console.error(
         response?.error ??
-          "Failed to start agent."
+        "Failed to start agent"
       );
     }
+
+    promptElement.value =
+      "";
+
+    await loadMessages();
   } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
+    console.error(
+      "Failed to send prompt:",
+      error
     );
   } finally {
     sendButton.disabled =
@@ -372,136 +250,13 @@ async function sendPrompt(): Promise<void> {
   }
 }
 
-async function clearChat(): Promise<void> {
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "CLEAR_CHAT",
-      });
-
-    if (
-      response?.success
-    ) {
-      messagesElement.innerHTML =
-        "";
-
-      setStatus(
-        "Chat cleared."
-      );
-    }
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
-    );
-  }
-}
-
-async function testScreenshot(): Promise<void> {
-  setStatus(
-    "Capturing screenshot..."
-  );
-
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "LOCAL_SCREENSHOT_TEST",
-      });
-
-    if (
-      response?.success
-    ) {
-      setStatus(
-        "Screenshot sent."
-      );
-    } else {
-      setStatus(
-        response?.error ??
-          "Screenshot failed."
-      );
-    }
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
-    );
-  }
-}
-
-async function runDemo(): Promise<void> {
-  setStatus(
-    "Running demo..."
-  );
-
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "DEMO_ACTION",
-      });
-
-    if (
-      response?.success
-    ) {
-      setStatus(
-        "Demo executed."
-      );
-    } else {
-      setStatus(
-        response?.error ??
-          "Demo failed."
-      );
-    }
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
-    );
-  }
-}
-
-/*
- * New JSON message from background.
- */
-chrome.runtime.onMessage.addListener(
-  (
-    message
-  ) => {
-    if (
-      message?.type !==
-      "CHAT_MESSAGE"
-    ) {
-      return;
-    }
-
-    const chatMessage =
-      message.message as ChatMessage;
-
-    appendMessage(
-      chatMessage
-    );
-
-    if (
-      chatMessage.type ===
-      "CONNECTION_STATUS"
-    ) {
-      setStatus(
-        chatMessage.text ??
-          ""
-      );
-    }
+sendButton.addEventListener(
+  "click",
+  () => {
+    void sendPrompt();
   }
 );
 
-/*
- * Enter = send.
- * Shift + Enter = newline.
- */
 promptElement.addEventListener(
   "keydown",
   (event) => {
@@ -516,34 +271,27 @@ promptElement.addEventListener(
   }
 );
 
-sendButton.addEventListener(
-  "click",
-  () => {
-    void sendPrompt();
-  }
-);
-
 clearButton.addEventListener(
   "click",
-  () => {
-    void clearChat();
+  async () => {
+    await chrome.runtime.sendMessage({
+      type:
+        "CLEAR_CHAT",
+    });
+
+    await loadMessages();
   }
 );
 
-screenshotButton.addEventListener(
-  "click",
-  () => {
-    void testScreenshot();
-  }
-);
-
-demoButton.addEventListener(
-  "click",
-  () => {
-    void runDemo();
+chrome.runtime.onMessage.addListener(
+  (message) => {
+    if (
+      message?.type ===
+      "CHAT_MESSAGE"
+    ) {
+      void loadMessages();
+    }
   }
 );
 
 void loadMessages();
-
-promptElement.focus();
