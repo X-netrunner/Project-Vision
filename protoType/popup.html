@@ -1,234 +1,492 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
+
   <meta
     name="viewport"
     content="width=device-width, initial-scale=1.0"
-  />
-  <title>Project Vision</title>
+  >
+
+  <title>Project-Vision</title>
 
   <style>
     * {
       box-sizing: border-box;
     }
 
+    html,
     body {
       margin: 0;
-      width: 420px;
-      height: 600px;
-      font-family:
-        Inter,
-        system-ui,
-        -apple-system,
-        BlinkMacSystemFont,
-        "Segoe UI",
-        sans-serif;
-      background: #f7f7f8;
-      color: #202123;
-    }
-
-    .app {
-      display: flex;
-      flex-direction: column;
+      padding: 0;
+      width: 100%;
       height: 100%;
     }
 
-    .header {
-      padding: 14px 16px;
+    body {
+      width: 420px;
+      min-height: 600px;
+      font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Arial,
+        sans-serif;
+
       background: #ffffff;
-      border-bottom: 1px solid #e5e5e5;
+      color: #222;
       display: flex;
-      justify-content: space-between;
+      flex-direction: column;
+    }
+
+    .header {
+      height: 58px;
+      padding: 12px 16px;
+
+      border-bottom: 1px solid #e5e5e5;
+
+      display: flex;
       align-items: center;
+      justify-content: space-between;
+
+      flex-shrink: 0;
     }
 
     .title {
       font-size: 16px;
-      font-weight: 700;
+      font-weight: 600;
     }
 
     .subtitle {
-      font-size: 11px;
-      color: #777;
       margin-top: 2px;
+      font-size: 11px;
+      color: #888;
     }
 
-    #clearBtn {
-      border: 0;
-      background: transparent;
-      color: #777;
+    #clear {
+      width: auto;
+      margin: 0;
+      padding: 6px 9px;
+
+      border: 1px solid #ddd;
+      border-radius: 6px;
+
+      background: #fff;
+      color: #555;
+
       cursor: pointer;
-      font-size: 12px;
     }
 
-    #clearBtn:hover {
-      color: #222;
+    #clear:hover {
+      background: #f5f5f5;
     }
 
     #messages {
       flex: 1;
-      overflow-y: auto;
-      padding: 14px;
-    }
 
-    .message {
-      margin-bottom: 12px;
+      overflow-y: auto;
+
+      padding: 16px 12px;
+
       display: flex;
       flex-direction: column;
+      gap: 12px;
+
+      background: #fafafa;
     }
 
-    .message.user {
-      align-items: flex-end;
-    }
-
-    .message.server,
-    .message.system {
-      align-items: flex-start;
-    }
-
-    .bubble {
-      max-width: 90%;
-      padding: 10px 12px;
-      border-radius: 14px;
-      white-space: pre-wrap;
-      word-break: break-word;
-      font-size: 13px;
-      line-height: 1.4;
-    }
-
-    .user .bubble {
-      background: #202123;
-      color: white;
-      border-bottom-right-radius: 4px;
-    }
-
-    .server .bubble {
-      background: white;
-      border: 1px solid #e4e4e4;
-      border-bottom-left-radius: 4px;
-    }
-
-    .system .bubble {
-      background: #ececf1;
-      color: #666;
-      font-size: 11px;
-    }
-
-    .type {
-      font-size: 9px;
-      color: #999;
-      margin: 3px 5px;
-      text-transform: uppercase;
-    }
-
-    details {
-      margin-top: 7px;
+    .message-row {
+      display: flex;
       width: 100%;
     }
 
-    summary {
-      cursor: pointer;
-      font-size: 11px;
-      color: #666;
+    .message-row.user {
+      justify-content: flex-end;
     }
 
-    pre {
-      margin: 6px 0 0;
-      padding: 8px;
-      background: #111;
-      color: #eee;
-      border-radius: 8px;
-      overflow-x: auto;
+    .message-row.server,
+    .message-row.system {
+      justify-content: flex-start;
+    }
+
+    .message-bubble {
+      max-width: 86%;
+
+      padding: 10px 12px;
+
+      border-radius: 12px;
+
+      font-size: 13px;
+      line-height: 1.45;
+
+      overflow-wrap: anywhere;
+    }
+
+    .message-row.user
+    .message-bubble {
+      background: #222;
+      color: white;
+
+      border-bottom-right-radius: 4px;
+    }
+
+    .message-row.server
+    .message-bubble {
+      background: white;
+      color: #222;
+
+      border: 1px solid #e5e5e5;
+
+      border-bottom-left-radius: 4px;
+    }
+
+    .message-row.system
+    .message-bubble {
+      background: #f0f0f0;
+      color: #666;
+
+      font-size: 12px;
+    }
+
+    .message-label {
+      margin-bottom: 5px;
+
       font-size: 10px;
+      font-weight: 600;
+
+      color: #888;
+      text-transform: uppercase;
+    }
+
+    .message-text {
+      white-space: pre-wrap;
+    }
+
+    .json-details {
+      margin-top: 9px;
+
+      border-top: 1px solid #eee;
+      padding-top: 7px;
+    }
+
+    .json-details summary {
+      cursor: pointer;
+
+      color: #777;
+
+      font-size: 11px;
+    }
+
+    .json-details pre {
+      max-width: 100%;
+
+      margin-top: 7px;
+      padding: 8px;
+
+      overflow-x: auto;
+
+      background: #f5f5f5;
+
+      border-radius: 5px;
+
+      font-family:
+        "Cascadia Code",
+        "Consolas",
+        monospace;
+
+      font-size: 10px;
+      line-height: 1.4;
+
       white-space: pre-wrap;
     }
 
     .screenshot {
-      max-width: 100%;
+      display: block;
+
+      width: 100%;
+      max-height: 280px;
+
+      object-fit: contain;
+
       margin-top: 8px;
-      border-radius: 8px;
+
+      border-radius: 7px;
+
       border: 1px solid #ddd;
     }
 
     .composer {
       padding: 10px;
-      background: white;
+
       border-top: 1px solid #e5e5e5;
+
+      background: white;
+
+      flex-shrink: 0;
     }
 
-    .composer-row {
+    .input-container {
       display: flex;
+      align-items: flex-end;
+
       gap: 8px;
+
+      padding: 8px;
+
+      border: 1px solid #ccc;
+
+      border-radius: 12px;
+
+      background: white;
     }
 
     #prompt {
       flex: 1;
-      resize: none;
-      min-height: 42px;
+
+      min-height: 38px;
       max-height: 120px;
-      padding: 10px 12px;
-      border: 1px solid #d9d9e0;
-      border-radius: 12px;
+
+      resize: none;
+
+      border: none;
       outline: none;
-      font: inherit;
+
+      font-family: inherit;
       font-size: 13px;
+
+      line-height: 1.4;
     }
 
-    #prompt:focus {
-      border-color: #999;
+    #prompt::placeholder {
+      color: #999;
     }
 
-    #sendBtn {
-      width: 70px;
-      border: 0;
-      border-radius: 12px;
-      background: #202123;
+    #send {
+      width: 34px;
+      height: 34px;
+
+      margin: 0;
+
+      padding: 0;
+
+      border: none;
+      border-radius: 8px;
+
+      background: #222;
       color: white;
+
       cursor: pointer;
+
+      font-size: 17px;
+    }
+
+    #send:hover {
+      opacity: 0.85;
+    }
+
+    #send:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .tools {
+      display: flex;
+      gap: 6px;
+
+      margin-top: 7px;
+    }
+
+    .tool-button {
+      width: auto;
+
+      margin: 0;
+
+      padding: 5px 8px;
+
+      border: 1px solid #ddd;
+      border-radius: 5px;
+
+      background: white;
+      color: #666;
+
+      font-size: 10px;
+
+      cursor: pointer;
+    }
+
+    .tool-button:hover {
+      background: #f5f5f5;
+    }
+
+
+    #debug-panel {
+      margin-top: 8px;
+      padding: 8px;
+      border: 1px solid #e5e5e5;
+      border-radius: 8px;
+      background: #fafafa;
+    }
+
+    .debug-title {
+      margin-bottom: 7px;
+      font-size: 10px;
+      font-weight: 700;
+      color: #777;
+      text-transform: uppercase;
+    }
+
+    .srijan-status {
+      margin-top: 5px;
+      font-size: 10px;
+      color: #777;
+      line-height: 1.3;
+    }
+
+    #srijan-config-status[data-state="saved"] {
+      color: #4f7a52;
+    }
+
+    #srijan-config-status[data-state="dirty"] {
+      color: #9a6a00;
+    }
+
+    #srijan-connection-status[data-state="open"] {
+      color: #2f7d32;
       font-weight: 600;
     }
 
-    #sendBtn:disabled {
-      opacity: 0.5;
-      cursor: default;
+    #srijan-connection-status[data-state="connecting"] {
+      color: #8a6d1d;
+    }
+
+    #srijan-connection-status[data-state="closed"],
+    #srijan-connection-status[data-state="invalid_url"] {
+      color: #a33;
+    }
+
+    .debug-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .debug-check {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+      font-size: 10px;
+      color: #666;
+    }
+
+    #status {
+      padding: 5px 2px 0;
+
+      font-size: 10px;
+      color: #999;
+
+      min-height: 18px;
     }
   </style>
 </head>
 
 <body>
-  <div class="app">
 
-    <div class="header">
-      <div>
-        <div class="title">Project Vision</div>
-        <div class="subtitle">
-          Privacy-preserving browser agent
-        </div>
+  <div class="header">
+    <div>
+      <div class="title">
+        Project-Vision
       </div>
 
-      <button id="clearBtn">
-        Clear
-      </button>
+      <div class="subtitle">
+        On-device visual browser agent
+      </div>
     </div>
 
-    <div id="messages"></div>
+    <button id="clear">
+      Clear
+    </button>
+  </div>
 
-    <div class="composer">
-      <div class="composer-row">
-        <textarea
-          id="prompt"
-          placeholder="Tell the browser agent what to do..."
-        ></textarea>
+  <div id="messages">
+  </div>
 
-        <button id="sendBtn">
-          Send
+  <div class="composer">
+
+    <div class="input-container">
+
+      <textarea
+        id="prompt"
+        rows="1"
+        placeholder="Message your browser agent..."
+      ></textarea>
+
+      <button
+        id="send"
+        title="Send"
+      >
+        ↑
+      </button>
+
+    </div>
+
+    <div class="tools">
+
+      <button id="screenshot" class="tool-button">
+        Screenshot
+      </button>
+
+      <button id="demo" class="tool-button">
+        Demo: Google
+      </button>
+
+      <button id="debug-toggle" class="tool-button">
+        Debug
+      </button>
+
+    </div>
+
+    <div id="debug-panel" hidden>
+      <div class="debug-title">Debug modes</div>
+      <div class="debug-grid">
+        <button id="debug-health" class="tool-button">
+          Test local server
+        </button>
+        <button id="debug-context" class="tool-button">
+          Test prompt + screenshot
+        </button>
+        <button id="debug-ping" class="tool-button">
+          Ping native host
+        </button>
+        <button id="debug-action" class="tool-button">
+          Test DOM action
         </button>
       </div>
+
+      <div class="debug-title" style="margin-top:10px;">Srijan connection</div>
+      <input id="srijan-url" type="text" placeholder="wss://your-ngrok-domain.ngrok.app/ws" autocomplete="off" spellcheck="false" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:6px;font:inherit;font-size:11px;">
+      <div id="srijan-config-status" class="srijan-status">URL not configured</div>
+      <div id="srijan-connection-status" class="srijan-status" data-state="not_configured">Connection: NOT CONFIGURED</div>
+      <div class="debug-grid" style="margin-top:6px;">
+        <button id="srijan-save" class="tool-button">Save URL</button>
+        <button id="srijan-reconnect" class="tool-button">Reconnect</button>
+      </div>
+      <label class="debug-check">
+        <input id="debug-verbose" type="checkbox">
+        Verbose debug messages
+      </label>
+    </div>
+
+    <div id="status">
+      Ready
     </div>
 
   </div>
 
-  <script src="dist/popup.js"></script>
+  <script
+    type="module"
+    src="dist/popup.js"
+  ></script>
+
 </body>
 </html>

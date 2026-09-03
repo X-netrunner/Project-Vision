@@ -5,8 +5,7 @@ export async function executeContentAction(action, tabId) {
             action,
         });
         if (!response ||
-            typeof response.success !==
-                "boolean") {
+            typeof response.success !== "boolean") {
             return {
                 success: false,
                 action: action.action,

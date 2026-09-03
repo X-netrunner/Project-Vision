@@ -6,85 +6,126 @@
     }
     globalState.__projectVisionContentScriptLoaded =
         true;
+    function getElementAtPoint(x, y) {
+        return document.elementFromPoint(x, y);
+    }
     function findClickableElement(element) {
         if (!element) {
             return null;
         }
-        const clickable = element.closest("button, a, input, textarea, select, [role='button'], [role='link'], [onclick]");
-        if (clickable instanceof
-            HTMLElement) {
+        const clickable = element.closest('button, a, input, textarea, select, [role="button"], [onclick], [tabindex]');
+        if (clickable instanceof HTMLElement) {
             return clickable;
         }
-        if (element instanceof
-            HTMLElement) {
-            return element;
-        }
-        return null;
+        return element instanceof HTMLElement
+            ? element
+            : null;
     }
-    function getElementAtPoint(x, y) {
-        const element = document.elementFromPoint(x, y);
-        return findClickableElement(element);
-    }
-    function click(action) {
-        if (typeof action.x !==
-            "number" ||
-            typeof action.y !==
-                "number") {
-            return {
-                success: false,
-                error: "x and y are required",
-            };
-        }
-        const element = getElementAtPoint(action.x, action.y);
+    function clickAt(x, y) {
+        const element = getElementAtPoint(x, y);
         if (!element) {
             return {
                 success: false,
-                error: "No clickable element found at coordinates",
+                error: `No element found at (${x}, ${y})`,
             };
         }
-        element.click();
+        const clickable = findClickableElement(element);
+        if (!clickable) {
+            return {
+                success: false,
+                error: `Element at (${x}, ${y}) is not clickable`,
+            };
+        }
+        clickable.click();
         return {
             success: true,
         };
     }
-    function typeText(action) {
-        if (typeof action.text !==
-            "string") {
+    function findTextInput() {
+        const active = document.activeElement;
+        if (active instanceof HTMLInputElement ||
+            active instanceof HTMLTextAreaElement ||
+            (active instanceof HTMLElement &&
+                active.isContentEditable)) {
+            return active;
+        }
+        const selectors = [
+            "input[type='search']",
+            "input[type='text']",
+            "textarea[name='q']",
+            "textarea[aria-label*='Search' i]",
+            "input[name='q']",
+            "input[aria-label*='Search' i]",
+            "textarea",
+            "input:not([type='hidden'])",
+        ];
+        for (const selector of selectors) {
+            const element = document.querySelector(selector);
+            if (element instanceof HTMLElement) {
+                return element;
+            }
+        }
+        return null;
+    }
+    function setInputValue(element, text) {
+        const prototype = element instanceof HTMLTextAreaElement
+            ? HTMLTextAreaElement.prototype
+            : HTMLInputElement.prototype;
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+        const setter = descriptor?.set;
+        if (setter) {
+            setter.call(element, text);
+        }
+        else {
+            element.value = text;
+        }
+        element.dispatchEvent(new Event("input", {
+            bubbles: true,
+            composed: true,
+        }));
+        element.dispatchEvent(new Event("change", {
+            bubbles: true,
+            composed: true,
+        }));
+    }
+    function typeIntoElement(text, x, y) {
+        let element = null;
+        element = findTextInput();
+        if (!element &&
+            typeof x === "number" &&
+            typeof y === "number") {
+            const at = getElementAtPoint(x, y);
+            if (at instanceof HTMLInputElement ||
+                at instanceof HTMLTextAreaElement ||
+                (at instanceof HTMLElement &&
+                    at.isContentEditable)) {
+                element = at;
+            }
+            else if (at) {
+                element =
+                    at.closest("input, textarea, [contenteditable]");
+            }
+        }
+        if (!element) {
             return {
                 success: false,
-                error: "text is required",
+                error: "No supported input element found",
             };
         }
-        const active = document.activeElement;
-        if (active instanceof
-            HTMLInputElement ||
-            active instanceof
-                HTMLTextAreaElement) {
-            const prototype = active instanceof
-                HTMLTextAreaElement
-                ? HTMLTextAreaElement.prototype
-                : HTMLInputElement.prototype;
-            const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
-            descriptor?.set?.call(active, action.text);
-            active.dispatchEvent(new Event("input", {
-                bubbles: true,
-            }));
-            active.dispatchEvent(new Event("change", {
-                bubbles: true,
-            }));
+        element.focus();
+        if (element instanceof HTMLInputElement ||
+            element instanceof HTMLTextAreaElement) {
+            setInputValue(element, text);
             return {
                 success: true,
             };
         }
-        if (active instanceof
-            HTMLElement &&
-            active.isContentEditable) {
-            active.textContent =
-                action.text;
-            active.dispatchEvent(new InputEvent("input", {
+        if (element.isContentEditable) {
+            element.textContent = text;
+            element.dispatchEvent(new InputEvent("input", {
                 bubbles: true,
                 inputType: "insertText",
-                data: action.text,
+                data: text,
             }));
             return {
                 success: true,
@@ -92,108 +133,112 @@
         }
         return {
             success: false,
-            error: "No supported editable element is focused",
+            error: "Element is not a text input",
         };
     }
-    function pressKey(action) {
-        if (typeof action.key !==
-            "string" ||
-            action.key.length ===
-                0) {
-            return {
-                success: false,
-                error: "key is required",
-            };
-        }
-        const target = document.activeElement ??
-            document.body;
+    function pressKey(key) {
+        const target = document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : document.body;
         target.dispatchEvent(new KeyboardEvent("keydown", {
-            key: action.key,
+            key,
             bubbles: true,
             cancelable: true,
         }));
         target.dispatchEvent(new KeyboardEvent("keyup", {
-            key: action.key,
+            key,
             bubbles: true,
             cancelable: true,
         }));
+        if (key === "Enter" &&
+            document.activeElement) {
+            const active = document.activeElement;
+            const form = active instanceof HTMLElement
+                ? active.closest("form")
+                : null;
+            if (form) {
+                if (typeof form.requestSubmit === "function") {
+                    form.requestSubmit();
+                }
+                else {
+                    form.submit();
+                }
+            }
+        }
         return {
             success: true,
         };
     }
-    function scroll(action) {
-        if ((action.direction !==
-            "up" &&
-            action.direction !==
-                "down") ||
-            typeof action.amount !==
-                "number") {
-            return {
-                success: false,
-                error: "direction and amount are required",
-            };
-        }
-        const distance = action.direction ===
-            "down"
-            ? action.amount
-            : -action.amount;
+    function scrollPage(direction, amount) {
+        const distance = direction === "down"
+            ? amount
+            : -amount;
         window.scrollBy({
             top: distance,
-            left: 0,
-            behavior: "smooth",
+            behavior: "auto",
         });
         return {
             success: true,
         };
     }
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-        if (!message) {
+        if (!message ||
+            typeof message !== "object") {
             return;
         }
-        if (message.type ===
-            "PING") {
+        if (message.type === "PING") {
             sendResponse({
                 success: true,
             });
             return;
         }
-        if (message.type !==
-            "AGENT_ACTION") {
+        if (message.type !== "AGENT_ACTION") {
             return;
         }
         const action = message.action;
-        if (!action) {
+        if (!action ||
+            typeof action.action !== "string") {
             sendResponse({
                 success: false,
-                error: "Missing action",
+                error: "Invalid action",
             });
             return;
         }
-        let result;
-        switch (action.action) {
-            case "click":
-                result =
-                    click(action);
-                break;
-            case "type":
-                result =
-                    typeText(action);
-                break;
-            case "press":
-                result =
-                    pressKey(action);
-                break;
-            case "scroll":
-                result =
-                    scroll(action);
-                break;
-            default:
-                result = {
-                    success: false,
-                    error: "Unsupported content action",
-                };
+        try {
+            let result;
+            switch (action.action) {
+                case "click":
+                    result = clickAt(action.x, action.y);
+                    break;
+                case "type":
+                    result =
+                        typeIntoElement(action.text, action.x, action.y);
+                    break;
+                case "press":
+                    result =
+                        pressKey(action.key);
+                    break;
+                case "scroll":
+                    result =
+                        scrollPage(action.direction, action.amount);
+                    break;
+                default:
+                    result = {
+                        success: false,
+                        error: `Action "${action.action}" ` +
+                            "must be handled by the background service worker",
+                    };
+            }
+            sendResponse(result);
         }
-        sendResponse(result);
+        catch (error) {
+            sendResponse({
+                success: false,
+                error: error instanceof Error
+                    ? error.message
+                    : String(error),
+            });
+        }
     });
     console.log("[Project-Vision] Content script ready");
 })();

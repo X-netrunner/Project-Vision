@@ -1,0 +1,9 @@
+{
+  "name": "com.projectvision.local_server",
+  "description": "Project-Vision prototype local server launcher",
+  "path": "ABSOLUTE_PATH_TO_protoType/native_host.py",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://EXTENSION_ID/"
+  ]
+}
