@@ -89,9 +89,12 @@ def sanitize_dpr(device_pixel_ratio) -> float:
     return min(max(d, 0.5), 4.0)
 
 
-def _xyxy_from_4tuple(vals) -> tuple | None:
-    """Convert a raw [x1,y1,x2,y2] (X horizontal, Y vertical) tuple, regardless
-    of scale, into the normalized (0-1000) center, or None if invalid."""
+def _xyxy_from_4tuple(vals, width: int = 1920, height: int = 1080) -> tuple | None:
+    """Convert raw [x1,y1,x2,y2] into image pixel center (cx, cy).
+
+    Qwen2.5-VL natively predicts absolute pixel coordinates directly matching
+    the input image dimensions. If values are 0-1 normalized, scales to pixels.
+    """
     if not vals or len(vals) != 4:
         return None
     try:
@@ -100,18 +103,20 @@ def _xyxy_from_4tuple(vals) -> tuple | None:
         return None
     if min(x1, y1, x2, y2) < 0:
         return None
-    # The grounding prompt asks for 0-1000 normalized coords. If every value
-    # fits in 0-1000 we trust that scale; otherwise the model emitted absolute
-    # pixels (e.g. up to image width/height, possibly >1000), so normalize.
-    if max(x1, x2, y1, y2) <= 1000:
-        return (x1 + x2) / 2.0, (y1 + y2) / 2.0
+
     cx = (x1 + x2) / 2.0
     cy = (y1 + y2) / 2.0
+
+    # If coordinates are 0.0 - 1.0 normalized
+    if max(x1, x2) <= 1.0 and max(y1, y2) <= 1.0:
+        return cx * width, cy * height
+
+    # Qwen2.5-VL native outputs are absolute image pixels
     return cx, cy
 
 
 def parse_box_center(output_text: str, width: int = 1920, height: int = 1080) -> tuple | None:
-    """Parse a grounding box center from the model output.
+    """Parse a grounding box center in image pixels from the model output.
 
     Qwen2.5-VL emits bounding boxes in several wrappers but always in
     [x1,y1,x2,y2] order (X horizontal, Y vertical):
@@ -119,8 +124,7 @@ def parse_box_center(output_text: str, width: int = 1920, height: int = 1080) ->
       - (x1,y1),(x2,y2) plain pairs
       - [x1,y1,x2,y2] bracketed array
       - JSON {"bbox_2d": [x1,y1,x2,y2], ...}
-    Coordinates may be normalized to 0-1000 or absolute pixels. Returns the
-    box center normalized to 0-1000 so callers scale by image dimensions.
+    Returns the box center in image pixel coordinates (pixel_x, pixel_y).
     """
     if not output_text:
         return None
@@ -131,7 +135,7 @@ def parse_box_center(output_text: str, width: int = 1920, height: int = 1080) ->
         output_text, re.IGNORECASE,
     )
     if m:
-        return _xyxy_from_4tuple(m.groups())
+        return _xyxy_from_4tuple(m.groups(), width, height)
 
     # 1b) Flat tuple box_start WITHOUT pair syntax: (x1,y1,x2,y2)
     m = re.search(
@@ -139,17 +143,17 @@ def parse_box_center(output_text: str, width: int = 1920, height: int = 1080) ->
         output_text, re.IGNORECASE,
     )
     if m:
-        return _xyxy_from_4tuple(m.groups())
+        return _xyxy_from_4tuple(m.groups(), width, height)
 
     # 2) JSON bbox_2d array
     m = re.search(r'"bbox_2d"\s*:\s*\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]', output_text)
     if m:
-        return _xyxy_from_4tuple(m.groups())
+        return _xyxy_from_4tuple(m.groups(), width, height)
 
     # 3) Bracketed array [x1,y1,x2,y2]
     m = re.search(r"\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]", output_text)
     if m:
-        return _xyxy_from_4tuple(m.groups())
+        return _xyxy_from_4tuple(m.groups(), width, height)
 
     # 4) Flat 4-tuple in parentheses: (x1,y1,x2,y2)
     m = re.search(
@@ -157,7 +161,7 @@ def parse_box_center(output_text: str, width: int = 1920, height: int = 1080) ->
         output_text,
     )
     if m:
-        return _xyxy_from_4tuple(m.groups())
+        return _xyxy_from_4tuple(m.groups(), width, height)
 
     # 5) Plain two-pair fallback
     pairs = re.findall(PAIR_RE, output_text)
@@ -165,7 +169,7 @@ def parse_box_center(output_text: str, width: int = 1920, height: int = 1080) ->
         return float(pairs[0][0]), float(pairs[0][1])
     if len(pairs) >= 2:
         (x1, y1), (x2, y2) = pairs[:2]
-        return _xyxy_from_4tuple((x1, y1, x2, y2))
+        return _xyxy_from_4tuple((x1, y1, x2, y2), width, height)
 
     return None
 
@@ -225,6 +229,46 @@ def _run_vlm_inference(image: Image.Image, prompt: str, max_new_tokens: int = 12
     generated_ids = generated_ids[:, prompt_len:]
     output_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
     return output_text.strip()
+
+
+def _smart_resize_dims(height: int, width: int) -> tuple[int, int]:
+    """Replicate Qwen2.5-VL's own image preprocessing resize exactly.
+
+    Before the model ever sees a screenshot, the processor's smart_resize()
+    shrinks (or grows) it so total pixels fall within [min_pixels, max_pixels]
+    and both dims are multiples of patch_size*merge_size - e.g. a 1920x1080
+    screenshot becomes roughly 1316x728 under the default ~1M pixel budget.
+    The model grounds bounding boxes in THAT resized frame, not the original
+    screenshot, so we must know it up front to build a correct prompt and to
+    scale the returned box back to real screenshot pixels afterward.
+    Returns (resized_width, resized_height); falls back to the original
+    dimensions (no-op scaling) if anything about the processor config is
+    unexpected, rather than raising.
+    """
+    try:
+        ip = processor.image_processor
+        patch_size = int(getattr(ip, "patch_size", 14))
+        merge_size = int(getattr(ip, "merge_size", 2))
+        min_pixels = int(getattr(ip, "min_pixels", 56 * 56))
+        max_pixels = int(getattr(ip, "max_pixels", 14 * 14 * 4 * 1280))
+        factor = patch_size * merge_size
+
+        h_bar = round(height / factor) * factor
+        w_bar = round(width / factor) * factor
+        if h_bar * w_bar > max_pixels:
+            beta = ((height * width) / max_pixels) ** 0.5
+            h_bar = max(factor, int(height / beta // factor) * factor)
+            w_bar = max(factor, int(width / beta // factor) * factor)
+        elif h_bar * w_bar < min_pixels:
+            beta = (min_pixels / (height * width)) ** 0.5
+            h_bar = -(-int(height * beta) // factor) * factor
+            w_bar = -(-int(width * beta) // factor) * factor
+        return int(w_bar), int(h_bar)
+    except Exception as err:
+        print(f"[!] smart_resize replication failed ({err}); assuming no resize.")
+        return width, height
+
+
 
 
 def reason_about_failure(
@@ -356,11 +400,20 @@ def predict_action(
     # refuses to emit a box when the prompt is long or offers a "think step by
     # step"/NOT_FOUND escape. Qwen2.5-VL is natively trained to answer with
     # <|box_start|>(X1,Y1),(X2,Y2)<|box_end|>.
+    #
+    # IMPORTANT: we must NOT tell the model the screenshot's original WxH -
+    # Qwen2.5-VL's own preprocessor (smart_resize) shrinks any image over its
+    # ~1M pixel budget before the model ever looks at it (e.g. a 1920x1080
+    # shot becomes ~1316x728), and it grounds boxes in THAT resized frame.
+    # Prompt with the real resized dims, then scale the answer back.
+    resized_w, resized_h = _smart_resize_dims(height, width)
+    if (resized_w, resized_h) != (width, height):
+        print(f"[*] Screenshot is {width}x{height}; model will actually see {resized_w}x{resized_h} after internal resize.")
+
     prompt = (
         f"{REDACTION_SYSTEM_INSTRUCTION_SHORT}\n"
         f"Locate {target_desc} in this screenshot.\n"
-        f"Reply with exactly the bounding box of that element normalized to 0-1000 "
-        f"(X horizontal, Y vertical, top-left then bottom-right):\n"
+        f"Reply with exactly the bounding box of that element in image pixel coordinates (image size {resized_w}x{resized_h}, top-left is 0,0):\n"
         f"<|box_start|>(X1,Y1),(X2,Y2)<|box_end|>\n"
         f"Output the box only."
     )
@@ -373,27 +426,35 @@ def predict_action(
         output_text = ""
     print(f"[*] VLM raw output: {output_text.strip()[:300]}")
 
-    target_x, target_y = width // 2, height // 2
     found = False
-
-    box_center = parse_box_center(output_text, width, height)
+    box_center = parse_box_center(output_text, resized_w, resized_h)
     if box_center:
-        center_x_norm, center_y_norm = box_center
-        target_x = int((center_x_norm / 1000.0) * width)
-        target_y = int((center_y_norm / 1000.0) * height)
+        # box_center is in the RESIZED frame the model actually looked at -
+        # scale it into the original screenshot's pixel space before anything
+        # downstream (DPR division, clamping) touches it.
+        raw_x_px, raw_y_px = box_center
+        scale_x = width / resized_w if resized_w else 1.0
+        scale_y = height / resized_h if resized_h else 1.0
+        center_x_px, center_y_px = raw_x_px * scale_x, raw_y_px * scale_y
         found = True
-        print(f"[*] VLM box center (norm {center_x_norm:.0f},{center_y_norm:.0f}) -> pixel ({target_x},{target_y})")
+        print(f"[*] VLM box center -> resized-frame ({raw_x_px:.1f},{raw_y_px:.1f}) -> screenshot pixel ({center_x_px:.1f},{center_y_px:.1f})")
     else:
+        center_x_px, center_y_px = width / 2.0, height / 2.0
         print(f"[!] VLM output not parsed as box: {output_text[:200]}")
 
     dpr = sanitize_dpr(device_pixel_ratio)
     if dpr > 0:
-        target_x = int(target_x / dpr)
-        target_y = int(target_y / dpr)
-    print(f"[*] CSS viewport mapping: image_px({width}x{height}) / dpr({dpr}) -> click({target_x},{target_y})")
+        target_x = int(center_x_px / dpr)
+        target_y = int(center_y_px / dpr)
+    else:
+        target_x = int(center_x_px)
+        target_y = int(center_y_px)
 
-    target_x = max(0, min(target_x, width - 1))
-    target_y = max(0, min(target_y, height - 1))
+    css_w = max(1, int(width / dpr)) if dpr > 0 else width
+    css_h = max(1, int(height / dpr)) if dpr > 0 else height
+    target_x = max(0, min(target_x, css_w - 1))
+    target_y = max(0, min(target_y, css_h - 1))
+    print(f"[*] CSS viewport mapping: image_px({center_x_px:.1f},{center_y_px:.1f}) / dpr({dpr}) -> click({target_x},{target_y}) in viewport({css_w}x{css_h})")
 
     # For 'type', the extension's typeIntoElement() first tries findTextInput() on
     # the already-focused element and only needs x/y as a fallback. So we keep the
