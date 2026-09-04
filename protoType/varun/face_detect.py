@@ -1,4 +1,5 @@
 import os
+import threading
 from typing import List, Tuple
 import cv2
 import numpy as np
@@ -24,11 +25,20 @@ face_detector = cv2.FaceDetectorYN.create(
     top_k=FACE_TOP_K,
 )
 
+# cv2.FaceDetectorYN wraps a shared cv2.dnn.Net. setInputSize() + detect() is a
+# two-step, stateful call on that single global instance, so concurrent calls
+# from multiple threads (e.g. two screenshots being redacted at the same time)
+# can race: one thread's setInputSize() can be overwritten by another's before
+# detect() runs, corrupting results for one or both images. Serialize access.
+_face_detector_lock = threading.Lock()
+
 def detect_faces(img: np.ndarray) -> List[Tuple[int, int, int, int]]:
     """Detects faces in the image and returns padded bounding coordinates (x1, y1, x2, y2)."""
     h, w, _ = img.shape
-    face_detector.setInputSize((w, h))
-    _, faces = face_detector.detect(img)
+
+    with _face_detector_lock:
+        face_detector.setInputSize((w, h))
+        _, faces = face_detector.detect(img)
 
     boxes: List[Tuple[int, int, int, int]] = []
     if faces is not None:

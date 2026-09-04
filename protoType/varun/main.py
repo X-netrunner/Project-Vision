@@ -1,6 +1,7 @@
 import os
 import sys
 import datetime
+from config import LOG_RETENTION_COUNT, YUNET_MIN_EXPECTED_BYTES
 
 
 # ==============================================================================
@@ -9,6 +10,32 @@ import datetime
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
+
+
+def _prune_old_logs(logs_dir: str, keep: int) -> None:
+    """Keeps at most `keep` most recent session log files, deleting older ones.
+
+    Session logs previously accumulated forever with no cleanup, which -- combined
+    with per-request payload logging -- meant sensitive data could pile up on disk
+    indefinitely. Runs once at startup before the new session log is opened.
+    """
+    try:
+        existing = [
+            os.path.join(logs_dir, f)
+            for f in os.listdir(logs_dir)
+            if f.startswith("redactor_") and f.endswith(".log")
+        ]
+        existing.sort(key=os.path.getmtime, reverse=True)
+        for old_path in existing[max(0, keep - 1):]:
+            try:
+                os.remove(old_path)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+_prune_old_logs(LOGS_DIR, LOG_RETENTION_COUNT)
 
 session_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 LOG_FILE_PATH = os.path.join(LOGS_DIR, f"redactor_{session_timestamp}.log")
@@ -66,6 +93,18 @@ def ensure_model_exists():
             req = urllib.request.Request(YUNET_DOWNLOAD_URL, headers=headers)
             with urllib.request.urlopen(req) as response, open(YUNET_PATH, "wb") as out_file:
                 out_file.write(response.read())
+
+            # Basic integrity sanity check -- catches truncated/corrupt downloads
+            # (e.g. an interrupted connection, or an HTML error page saved instead
+            # of the binary model) before the app tries to load it as an ONNX net.
+            downloaded_size = os.path.getsize(YUNET_PATH)
+            if downloaded_size < YUNET_MIN_EXPECTED_BYTES:
+                os.remove(YUNET_PATH)
+                raise ValueError(
+                    f"Downloaded model file is only {downloaded_size} bytes "
+                    f"(expected at least {YUNET_MIN_EXPECTED_BYTES}); download likely corrupted."
+                )
+
             print("[PRE-FLIGHT] Model downloaded successfully.")
         except Exception as e:
             print(f"[PRE-FLIGHT] Error downloading model: {e}")
@@ -128,32 +167,7 @@ def ensure_dependencies():
             sys.exit(1)
 
 def ensure_opencv_headless():
-    """
-    Guards against the opencv-python / opencv-python-headless collision.
-
-    rapidocr-onnxruntime depends on plain 'opencv-python' (GUI build, needs
-    system libGL/Qt), while this project needs the 'opencv-python-headless'
-    build (no cv2.imshow/GUI calls exist anywhere in this codebase). Both
-    packages install into the same 'cv2' import namespace, so pip can end
-    up with either one "winning" depending on install order -- and that
-    order isn't guaranteed to be the same across the different machines
-    this gets launched on via the Chrome extension.
-
-    Both packages also install into the *same file paths* on disk, not just
-    the same namespace. That means pip's per-package uninstall manifest can
-    go stale: if headless gets force-reinstalled over GUI (this function's
-    own repair step does exactly that) and someone later runs
-    `pip uninstall opencv-python`, pip deletes files by its old manifest --
-    which now includes files that were physically overwritten with headless
-    content. The GUI package is gone, but it silently guts the headless
-    install with it (e.g. cv2.FaceDetectorYN vanishes).
-
-    So a presence check alone ("is the headless dist installed") isn't
-    enough -- the files backing it can be missing even though the dist-info
-    says it's there. This does a real functional smoke test (imports cv2 and
-    touches a symbol this codebase actually needs) and treats any failure,
-    for any reason, as "needs a clean reinstall."
-    """
+    
     try:
         import importlib.metadata as importlib_metadata
     except ImportError:
@@ -249,7 +263,7 @@ import time
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from redact import redact_image
-from config import SERVER_HOST, SERVER_PORT, WS_ENDPOINT, MAX_PAYLOAD_BYTES
+from config import SERVER_HOST, SERVER_PORT, WS_ENDPOINT, MAX_PAYLOAD_BYTES, GC_COLLECT_INTERVAL
 
 # Standard logger for application lifecycle (terminal + log file via TeeLogger)
 logging.basicConfig(
@@ -268,6 +282,17 @@ payload_file_logger.setLevel(logging.INFO)
 payload_file_logger.addHandler(payload_file_handler)
 payload_file_logger.propagate = False  # Avoid echoing to root logger and terminal
 
+# Counts processed messages so gc.collect() runs periodically instead of on every
+# single message -- a full GC sweep per message adds a real latency tax to what's
+# meant to be a low-latency, per-screenshot pipeline.
+_processed_message_count = 0
+
+def _maybe_collect() -> None:
+    global _processed_message_count
+    _processed_message_count += 1
+    if _processed_message_count % GC_COLLECT_INTERVAL == 0:
+        gc.collect()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Pre-warms deep learning models during server startup before receiving traffic."""
@@ -275,9 +300,9 @@ async def lifespan(app: FastAPI):
     start_warmup = time.perf_counter()
     try:
         dummy_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-        payload_file_logger.info(f"[WARMUP-IN] Base64 payload: {dummy_b64}")
+        payload_file_logger.info(f"[WARMUP-IN] {len(dummy_b64)} base64 chars (image content intentionally not logged)")
         warmup_out = await asyncio.to_thread(redact_image, dummy_b64)
-        payload_file_logger.info(f"[WARMUP-OUT] Base64 payload: {warmup_out}")
+        payload_file_logger.info(f"[WARMUP-OUT] {len(warmup_out)} base64 chars (image content intentionally not logged)")
         warmup_duration = round((time.perf_counter() - start_warmup) * 1000, 2)
         logger.info(f"[INIT] Models pre-warmed successfully in {warmup_duration} ms. Server ready.")
     except Exception as e:
@@ -313,16 +338,24 @@ async def websocket_endpoint(websocket: WebSocket):
                     if not raw_b64:
                         raise ValueError("Payload missing 'image' field.")
 
-                    # Written solely to the log file (omitted from the terminal)
-                    payload_file_logger.info(f"[{req_id}] INCOMING RAW_BASE64 (step {data.get('step_index')}): {raw_b64}")
+                    # Metadata only -- the actual image content is never written to
+                    # disk. This pipeline exists to strip PII/faces before a
+                    # screenshot goes anywhere; logging the raw payload here would
+                    # permanently persist the exact data it's meant to remove.
+                    payload_file_logger.info(
+                        f"[{req_id}] INCOMING RAW_SCREENSHOT (step {data.get('step_index')}): "
+                        f"{len(raw_b64)} base64 chars (image content intentionally not logged)"
+                    )
 
                     start_time = time.perf_counter()
                     # Offload the blocking CPU-bound redaction pipeline to an async worker thread
                     redacted_b64 = await asyncio.to_thread(redact_image, raw_b64)
                     elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
-                    # Written solely to the log file (omitted from the terminal)
-                    payload_file_logger.info(f"[{req_id}] OUTGOING REDACTED_BASE64 (step {data.get('step_index')}): {redacted_b64}")
+                    payload_file_logger.info(
+                        f"[{req_id}] OUTGOING REDACTED_SCREENSHOT (step {data.get('step_index')}): "
+                        f"{len(redacted_b64)} base64 chars (image content intentionally not logged)"
+                    )
 
                     response_payload = {
                         "type": "REDACTED_SCREENSHOT",
@@ -338,7 +371,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     logger.info(f"Redacted step {data.get('step_index')} in {elapsed_ms} ms")
 
                     del raw_b64, redacted_b64, response_payload, data, raw_text
-                    gc.collect()
+                    _maybe_collect()
 
                 except Exception as e:
                     logger.error(f"Redaction failed: {e}")
@@ -347,7 +380,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "request_id": req_id,
                         "error": f"Redaction failed: {str(e)}"
                     }))
-                    gc.collect()
+                    _maybe_collect()
             else:
                 await websocket.send_text(json.dumps({
                     "type": "ERROR",

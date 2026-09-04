@@ -16,6 +16,7 @@ from config import (
     FORM_HORIZONTAL_ALIGN_TOLERANCE_PX,
     FORM_LABEL_TRIGGERS,
     SENSITIVE_FIELD_LABELS,
+    PII_SPAN_MARGIN_RATIO,
 )
 
 logger = logging.getLogger("VarunRedactor")
@@ -30,35 +31,65 @@ def _process_text_and_pii(img: np.ndarray) -> List[Tuple[int, int, int, int]]:
 
     blur_regions: List[Tuple[int, int, int, int]] = []
 
-    # 1. Spatial Form Association (Vertical Form Fields)
+    # 1. Spatial Form Association (Vertically stacked labels + values -- e.g.
+    #    "Shipping Address" followed by a multi-line name/street/city block).
     for i, label_block in enumerate(blocks):
         lbl_lower = label_block["text"].lower().strip()
-        if any(trig == lbl_lower or lbl_lower.startswith(trig) for trig in FORM_LABEL_TRIGGERS):
-            lx, ly, lw, lh = label_block["rect"]
-            label_bottom = ly + lh
 
-            for j, candidate in enumerate(blocks):
-                if i == j or candidate["blurred"]:
-                    continue
+        # Match the trigger word anywhere in the label, not just as a strict
+        # prefix. "Shipping Address" / "Billing Address" / "Delivery Address"
+        # all contain "address" but don't *start with* it -- a startswith-only
+        # check missed them entirely.
+        if not any(trig == lbl_lower or trig in lbl_lower for trig in FORM_LABEL_TRIGGERS):
+            continue
 
-                cx, cy, cw, ch = candidate["rect"]
-                vert_dist = cy - label_bottom
-                horiz_overlap = abs(cx - lx)
+        lx, ly, lw, lh = label_block["rect"]
 
-                if 0 <= vert_dist <= FORM_VERTICAL_PROXIMITY_PX and horiz_overlap <= FORM_HORIZONTAL_ALIGN_TOLERANCE_PX:
-                    cand_lower = candidate["text"].lower()
-                    if any(cand_lower.startswith(t) for t in FORM_LABEL_TRIGGERS) or cand_lower == "your answer":
-                        continue
+        # Sort every other unblurred block top-to-bottom so a multi-line value
+        # can be walked one line at a time, instead of only ever measuring
+        # distance from the original label.
+        candidates = sorted(
+            (
+                (j, blk) for j, blk in enumerate(blocks)
+                if j != i and not blk["blurred"]
+            ),
+            key=lambda pair: pair[1]["rect"][1]
+        )
 
-                    logger.info(f"Form Association: Blurring '{candidate['text']}' under '{label_block['text']}'")
-                    px1 = max(0, cx - TEXT_PADDING_PX)
-                    py1 = max(0, cy - TEXT_PADDING_PX)
-                    px2 = min(w, cx + cw + TEXT_PADDING_PX)
-                    py2 = min(h, cy + ch + TEXT_PADDING_PX)
+        ref_bottom = ly + lh
+        ref_x = lx
 
-                    if px2 > px1 and py2 > py1:
-                        blur_regions.append((px1, py1, px2, py2))
-                        candidate["blurred"] = True
+        for j, candidate in candidates:
+            cx, cy, cw, ch = candidate["rect"]
+            vert_dist = cy - ref_bottom
+            horiz_overlap = abs(cx - ref_x)
+
+            # Only chain to blocks below and reasonably close to whichever
+            # line was most recently matched -- once a block is too far or
+            # misaligned, treat the value block as having ended.
+            if vert_dist < 0 or vert_dist > FORM_VERTICAL_PROXIMITY_PX:
+                continue
+            if horiz_overlap > FORM_HORIZONTAL_ALIGN_TOLERANCE_PX:
+                continue
+
+            cand_lower = candidate["text"].lower()
+            if any(cand_lower.startswith(t) for t in FORM_LABEL_TRIGGERS) or cand_lower == "your answer":
+                continue
+
+            logger.info(f"Form Association: Blurring '{candidate['text']}' under '{label_block['text']}'")
+            px1 = max(0, cx - TEXT_PADDING_PX)
+            py1 = max(0, cy - TEXT_PADDING_PX)
+            px2 = min(w, cx + cw + TEXT_PADDING_PX)
+            py2 = min(h, cy + ch + TEXT_PADDING_PX)
+
+            if px2 > px1 and py2 > py1:
+                blur_regions.append((px1, py1, px2, py2))
+                candidate["blurred"] = True
+                # Advance the reference point to this line, so the next
+                # line's proximity is judged from here -- lets the chain
+                # extend across an arbitrary number of stacked lines.
+                ref_bottom = cy + ch
+                ref_x = cx
 
     # 2. Inline Field Labels & Standalone Values
     for blk in blocks:
@@ -98,9 +129,11 @@ def _process_text_and_pii(img: np.ndarray) -> List[Tuple[int, int, int, int]]:
                 sub_x1 = int(bx + (start_idx * char_w))
                 sub_x2 = int(bx + (end_idx * char_w))
 
-                px1 = max(0, sub_x1 - 4)
+                span_margin = max(TEXT_PADDING_PX, int(char_w * PII_SPAN_MARGIN_RATIO))
+
+                px1 = max(0, sub_x1 - span_margin)
                 py1 = max(0, by - TEXT_PADDING_PX)
-                px2 = min(w, sub_x2 + TEXT_PADDING_PX)
+                px2 = min(w, sub_x2 + span_margin)
                 py2 = min(h, by + bh + TEXT_PADDING_PX)
 
                 if px2 > px1 and py2 > py1:
@@ -123,20 +156,17 @@ def redact_image(b64_str: str) -> str:
     if img is None:
         raise ValueError("Corrupt image data.")
 
-    # Concurrently execute Face Detection and OCR + PII analysis
     future_faces = EXECUTOR.submit(detect_faces, img)
     future_text_regions = EXECUTOR.submit(_process_text_and_pii, img)
 
     face_regions = future_faces.result()
     text_regions = future_text_regions.result()
 
-    # Apply all blurs sequentially to the original canvas
     for x1, y1, x2, y2 in face_regions + text_regions:
         roi = img[y1:y2, x1:x2]
         if roi.size > 0:
             img[y1:y2, x1:x2] = apply_heavy_blur(roi)
 
-    # Output JPEG Compression
     _, buffer = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_COMPRESSION_QUALITY])
     del img
 

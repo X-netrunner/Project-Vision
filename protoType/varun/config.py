@@ -11,6 +11,7 @@ MAX_PAYLOAD_BYTES = 32 * 1024 * 1024  # 32 MB frame ceiling
 
 # Model & Asset Paths
 YUNET_MODEL_PATH = os.path.join(BASE_DIR, "face_detection_yunet_2023mar.onnx")
+YUNET_MIN_EXPECTED_BYTES = 1_000_000  # sanity floor to catch truncated/corrupt downloads
 
 # YuNet Face Detection Parameters
 FACE_SCORE_THRESHOLD = 0.35  # Set to detect smaller icons/avatars
@@ -25,6 +26,9 @@ NLP_LANGUAGE = "en"
 TEXT_PADDING_PX = 2
 PII_CONFIDENCE_THRESHOLD = 0.35
 LABEL_BLUR_LEAD_PX = 6  # Pulls blur box left to cover initial characters
+PII_SPAN_MARGIN_RATIO = 0.6  # Extra per-side margin (fraction of estimated char width) added
+                              # around regex-matched PII substrings, to absorb error from
+                              # assuming uniform character width on proportional fonts.
 
 # Form-Aware Spatial Thresholds (Vertically stacked forms like Google Forms)
 FORM_VERTICAL_PROXIMITY_PX = 95
@@ -60,3 +64,7 @@ BLUR_KERNEL_DIVISOR = 3
 BLUR_MIN_KERNEL_SIZE = 15
 BLUR_SIGMA = 30
 JPEG_COMPRESSION_QUALITY = 85
+
+# Logging Settings
+LOG_RETENTION_COUNT = 5   # Number of past session log files to keep on disk (oldest pruned first)
+GC_COLLECT_INTERVAL = 20  # Run a full gc.collect() every N processed messages, not every single one
