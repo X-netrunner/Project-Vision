@@ -123,8 +123,100 @@ def ensure_dependencies():
             print(f"[PRE-FLIGHT] Installation failed with exit code {e.returncode}.")
             sys.exit(1)
 
+def ensure_opencv_headless():
+    """
+    Guards against the opencv-python / opencv-python-headless collision.
+
+    rapidocr-onnxruntime depends on plain 'opencv-python' (GUI build, needs
+    system libGL/Qt), while this project needs the 'opencv-python-headless'
+    build (no cv2.imshow/GUI calls exist anywhere in this codebase). Both
+    packages install into the same 'cv2' import namespace, so pip can end
+    up with either one "winning" depending on install order -- and that
+    order isn't guaranteed to be the same across the different machines
+    this gets launched on via the Chrome extension.
+
+    Both packages also install into the *same file paths* on disk, not just
+    the same namespace. That means pip's per-package uninstall manifest can
+    go stale: if headless gets force-reinstalled over GUI (this function's
+    own repair step does exactly that) and someone later runs
+    `pip uninstall opencv-python`, pip deletes files by its old manifest --
+    which now includes files that were physically overwritten with headless
+    content. The GUI package is gone, but it silently guts the headless
+    install with it (e.g. cv2.FaceDetectorYN vanishes).
+
+    So a presence check alone ("is the headless dist installed") isn't
+    enough -- the files backing it can be missing even though the dist-info
+    says it's there. This does a real functional smoke test (imports cv2 and
+    touches a symbol this codebase actually needs) and treats any failure,
+    for any reason, as "needs a clean reinstall."
+    """
+    try:
+        import importlib.metadata as importlib_metadata
+    except ImportError:
+        import importlib_metadata  # type: ignore
+
+    def _installed(dist_name):
+        try:
+            importlib_metadata.distribution(dist_name)
+            return True
+        except importlib_metadata.PackageNotFoundError:
+            return False
+
+    def _cv2_functional():
+        """Actually import cv2 and touch the symbols this app depends on,
+        in a subprocess so a broken/partial cv2 can't crash this process."""
+        probe = (
+            "import cv2; "
+            "assert hasattr(cv2, 'FaceDetectorYN'); "
+            "assert hasattr(cv2, 'dnn'); "
+            "assert hasattr(cv2, 'imencode')"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", probe],
+            capture_output=True, text=True
+        )
+        return result.returncode == 0
+
+    def _reinstall_headless(reason):
+        print(f"[PRE-FLIGHT] {reason} -- reinstalling opencv-python-headless cleanly...")
+        try:
+            subprocess.check_call([
+                sys.executable, "-m", "pip", "install",
+                "--force-reinstall", "--no-deps", "opencv-python-headless"
+            ])
+            print("[PRE-FLIGHT] cv2 resolved to a clean headless build.\n")
+        except subprocess.CalledProcessError as e:
+            print(f"[PRE-FLIGHT] Failed to reinstall opencv-python-headless: {e}")
+            sys.exit(1)
+
+    gui_present = _installed("opencv-python")
+    headless_present = _installed("opencv-python-headless")
+
+    if gui_present:
+        _reinstall_headless(
+            "Detected GUI 'opencv-python' alongside headless build"
+        )
+    elif not headless_present:
+        # Neither variant present yet (fresh env, requirements install above
+        # may have skipped it) -- install headless explicitly.
+        try:
+            subprocess.check_call([
+                sys.executable, "-m", "pip", "install", "opencv-python-headless"
+            ])
+        except subprocess.CalledProcessError as e:
+            print(f"[PRE-FLIGHT] Failed to install opencv-python-headless: {e}")
+            sys.exit(1)
+    elif not _cv2_functional():
+        # dist-info says headless is installed, but the files backing it are
+        # missing or broken (e.g. a prior 'pip uninstall opencv-python' tore
+        # out files that had been overwritten with headless content).
+        _reinstall_headless(
+            "opencv-python-headless is registered but cv2 failed a functional check"
+        )
+
 # Execute checks before internal application imports
 ensure_dependencies()
+ensure_opencv_headless()
 ensure_model_exists()
 
 # ==============================================================================
