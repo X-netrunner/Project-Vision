@@ -2,6 +2,7 @@ import os
 import sys
 import datetime
 
+
 # ==============================================================================
 # LOGGING & STREAMS SETUP (Terminal + File Mirroring)
 # ==============================================================================
@@ -12,11 +13,14 @@ os.makedirs(LOGS_DIR, exist_ok=True)
 session_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 LOG_FILE_PATH = os.path.join(LOGS_DIR, f"redactor_{session_timestamp}.log")
 
+# Open shared log file for the session
+log_file_handle = open(LOG_FILE_PATH, "a", encoding="utf-8", buffering=1)
+
 class TeeLogger:
     """Mirrors console writes to both terminal output and a log file."""
-    def __init__(self, stream, file_path):
+    def __init__(self, stream, file_obj):
         self.stream = stream
-        self.file = open(file_path, "a", encoding="utf-8", buffering=1)
+        self.file = file_obj
 
     def write(self, message):
         self.stream.write(message)
@@ -34,8 +38,8 @@ class TeeLogger:
         return self.stream.fileno()
 
 # Redirect stdout and stderr immediately
-sys.stdout = TeeLogger(sys.stdout, LOG_FILE_PATH)
-sys.stderr = TeeLogger(sys.stderr, LOG_FILE_PATH)
+sys.stdout = TeeLogger(sys.stdout, log_file_handle)
+sys.stderr = TeeLogger(sys.stderr, log_file_handle)
 
 print(f"[INIT] Session log initialized: {LOG_FILE_PATH}")
 
@@ -177,9 +181,19 @@ def ensure_opencv_headless():
         )
         return result.returncode == 0
 
-    def _reinstall_headless(reason):
+    def _reinstall_headless(reason, uninstall_gui_first=False):
         print(f"[PRE-FLIGHT] {reason} -- reinstalling opencv-python-headless cleanly...")
         try:
+            if uninstall_gui_first:
+                # Order matters: uninstall GUI *before* headless ever touches
+                # its files, so pip removes GUI's own untouched files by its
+                # manifest. Doing this the other way around (reinstall
+                # headless on top, uninstall GUI after) is what corrupts cv2
+                # -- pip would then delete files by GUI's stale manifest that
+                # have since been overwritten with headless's content.
+                subprocess.check_call([
+                    sys.executable, "-m", "pip", "uninstall", "-y", "opencv-python"
+                ])
             subprocess.check_call([
                 sys.executable, "-m", "pip", "install",
                 "--force-reinstall", "--no-deps", "opencv-python-headless"
@@ -193,8 +207,12 @@ def ensure_opencv_headless():
     headless_present = _installed("opencv-python-headless")
 
     if gui_present:
+        # Uninstall GUI first (see _reinstall_headless) so opencv-python's
+        # dist-info is actually removed -- otherwise this branch fires again
+        # on every future launch even though nothing is wrong.
         _reinstall_headless(
-            "Detected GUI 'opencv-python' alongside headless build"
+            "Detected GUI 'opencv-python' alongside headless build",
+            uninstall_gui_first=True
         )
     elif not headless_present:
         # Neither variant present yet (fresh env, requirements install above
@@ -222,6 +240,8 @@ ensure_model_exists()
 # ==============================================================================
 # APPLICATION LOGIC & IMPORTS
 # ==============================================================================
+import asyncio
+from contextlib import asynccontextmanager
 import gc
 import json
 import logging
@@ -231,7 +251,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from redact import redact_image
 from config import SERVER_HOST, SERVER_PORT, WS_ENDPOINT, MAX_PAYLOAD_BYTES
 
-# Configure Python logging to write directly into the mirrored stdout stream
+# Standard logger for application lifecycle (terminal + log file via TeeLogger)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -239,7 +259,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger("VarunRedactor")
 
-app = FastAPI(title="Varun Face & PII Redactor")
+# Dedicated logger strictly writing to file (bypasses terminal display)
+payload_file_handler = logging.FileHandler(LOG_FILE_PATH, encoding="utf-8")
+payload_file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+
+payload_file_logger = logging.getLogger("PayloadLogger")
+payload_file_logger.setLevel(logging.INFO)
+payload_file_logger.addHandler(payload_file_handler)
+payload_file_logger.propagate = False  # Avoid echoing to root logger and terminal
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Pre-warms deep learning models during server startup before receiving traffic."""
+    logger.info("[INIT] Pre-warming OCR, NLP, and Face Detection pipelines...")
+    start_warmup = time.perf_counter()
+    try:
+        dummy_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        payload_file_logger.info(f"[WARMUP-IN] Base64 payload: {dummy_b64}")
+        warmup_out = await asyncio.to_thread(redact_image, dummy_b64)
+        payload_file_logger.info(f"[WARMUP-OUT] Base64 payload: {warmup_out}")
+        warmup_duration = round((time.perf_counter() - start_warmup) * 1000, 2)
+        logger.info(f"[INIT] Models pre-warmed successfully in {warmup_duration} ms. Server ready.")
+    except Exception as e:
+        logger.warning(f"[INIT] Cold-start pre-warm encountered an error: {e}")
+    yield
+
+app = FastAPI(title="Varun Face & PII Redactor", lifespan=lifespan)
 
 @app.websocket(WS_ENDPOINT)
 async def websocket_endpoint(websocket: WebSocket):
@@ -268,9 +313,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     if not raw_b64:
                         raise ValueError("Payload missing 'image' field.")
 
+                    # Written solely to the log file (omitted from the terminal)
+                    payload_file_logger.info(f"[{req_id}] INCOMING RAW_BASE64 (step {data.get('step_index')}): {raw_b64}")
+
                     start_time = time.perf_counter()
-                    redacted_b64 = redact_image(raw_b64)
+                    # Offload the blocking CPU-bound redaction pipeline to an async worker thread
+                    redacted_b64 = await asyncio.to_thread(redact_image, raw_b64)
                     elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+
+                    # Written solely to the log file (omitted from the terminal)
+                    payload_file_logger.info(f"[{req_id}] OUTGOING REDACTED_BASE64 (step {data.get('step_index')}): {redacted_b64}")
 
                     response_payload = {
                         "type": "REDACTED_SCREENSHOT",
@@ -313,5 +365,7 @@ if __name__ == "__main__":
         host=SERVER_HOST,
         port=SERVER_PORT,
         ws_max_size=MAX_PAYLOAD_BYTES,
+        ws_ping_interval=20.0,
+        ws_ping_timeout=120.0,
         log_config=None  # Preserves custom logger handlers and stdout mirroring
     )

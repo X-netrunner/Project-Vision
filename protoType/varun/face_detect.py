@@ -1,4 +1,5 @@
 import os
+from typing import List, Tuple
 import cv2
 import numpy as np
 from blur_utils import apply_heavy_blur
@@ -23,12 +24,13 @@ face_detector = cv2.FaceDetectorYN.create(
     top_k=FACE_TOP_K,
 )
 
-def blur_faces(img: np.ndarray) -> np.ndarray:
-    """Detects and applies heavy blur to all faces in the image matrix."""
+def detect_faces(img: np.ndarray) -> List[Tuple[int, int, int, int]]:
+    """Detects faces in the image and returns padded bounding coordinates (x1, y1, x2, y2)."""
     h, w, _ = img.shape
     face_detector.setInputSize((w, h))
     _, faces = face_detector.detect(img)
 
+    boxes: List[Tuple[int, int, int, int]] = []
     if faces is not None:
         for face in faces:
             fx, fy, fw, fh = map(int, face[:4])
@@ -39,7 +41,16 @@ def blur_faces(img: np.ndarray) -> np.ndarray:
             x2 = min(w, fx + fw + pad_x)
             y2 = min(h, fy + fh + pad_y)
 
-            face_roi = img[y1:y2, x1:x2]
-            img[y1:y2, x1:x2] = apply_heavy_blur(face_roi)
+            if x2 > x1 and y2 > y1:
+                boxes.append((x1, y1, x2, y2))
 
+    return boxes
+
+def blur_faces(img: np.ndarray) -> np.ndarray:
+    """Detects and applies heavy blur to all faces in the image matrix."""
+    boxes = detect_faces(img)
+    for x1, y1, x2, y2 in boxes:
+        roi = img[y1:y2, x1:x2]
+        if roi.size > 0:
+            img[y1:y2, x1:x2] = apply_heavy_blur(roi)
     return img

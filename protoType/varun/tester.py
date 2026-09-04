@@ -2,10 +2,14 @@ import asyncio
 import base64
 import io
 import json
+import os
+import subprocess
+import sys
+import tempfile
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageGrab, ImageTk
 import websockets
 
 WS_URI = "ws://127.0.0.1:8000/ws"
@@ -31,11 +35,23 @@ class RedactionTestApp:
             pady=5,
             command=self.select_and_process
         )
-        self.btn_select.pack(side=tk.LEFT, padx=20)
+        self.btn_select.pack(side=tk.LEFT, padx=15)
+
+        self.btn_capture = tk.Button(
+            top_bar,
+            text="Capture Full Screen",
+            font=("Arial", 12, "bold"),
+            bg="#28a745",
+            fg="white",
+            padx=15,
+            pady=5,
+            command=self.capture_full_screen
+        )
+        self.btn_capture.pack(side=tk.LEFT, padx=10)
 
         self.lbl_status = tk.Label(
             top_bar,
-            text="Ready. Make sure app.py is running on :8000",
+            text="Ready. Make sure main.py is running on :8000",
             font=("Arial", 11),
             bg="#2d2d2d",
             fg="#cccccc"
@@ -50,7 +66,7 @@ class RedactionTestApp:
         left_box = tk.Frame(main_frame, bg="#252526", bd=2, relief=tk.GROOVE)
         left_box.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10)
 
-        lbl_left_title = tk.Label(left_box, text="ORIGINAL (Unredacted)", font=("Arial", 12, "bold"), fg="#4ec9b0", bg="#252526")
+        lbl_left_title = tk.Label(left_box, text="ORIGINAL (Full Screenshot)", font=("Arial", 12, "bold"), fg="#4ec9b0", bg="#252526")
         lbl_left_title.pack(pady=5)
 
         self.canvas_orig = tk.Label(left_box, bg="#1e1e1e")
@@ -79,12 +95,60 @@ class RedactionTestApp:
         raw_pil = Image.open(file_path).convert("RGB")
         self.display_image(raw_pil, is_original=True)
 
-        with open(file_path, "rb") as f:
-            b64_data = base64.b64encode(f.read()).decode("utf-8")
+        buffer = io.BytesIO()
+        raw_pil.save(buffer, format="JPEG", quality=95)
+        b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
         self.lbl_status.config(text="Sending frame to ws://127.0.0.1:8000/ws...", fg="#dcdcaa")
-
         threading.Thread(target=self.run_ws_query, args=(b64_data,), daemon=True).start()
+
+    def capture_full_screen(self):
+        """Hides the tester app window and captures the entire desktop screen."""
+        self.lbl_status.config(text="Capturing entire screen...", fg="#dcdcaa")
+
+        # Hide window completely so it's not visible in the screenshot
+        self.root.withdraw()
+
+        # Give the OS window compositor 300ms to hide the window
+        self.root.after(300, self._do_full_screen_grab)
+
+    def _do_full_screen_grab(self):
+        screenshot = None
+        try:
+            if sys.platform == "darwin":
+                # Native macOS screencapture handles multi-monitors, Retina scale, and full canvas cleanly
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp_path = tmp.name
+
+                cmd = ["screencapture", "-x", tmp_path]
+                res = subprocess.run(cmd, capture_output=True)
+
+                if res.returncode == 0 and os.path.exists(tmp_path):
+                    screenshot = Image.open(tmp_path).convert("RGB")
+                    os.remove(tmp_path)
+                else:
+                    # Fallback to Pillow
+                    screenshot = ImageGrab.grab().convert("RGB")
+            else:
+                # Windows & Linux: Grab whole screen
+                screenshot = ImageGrab.grab().convert("RGB")
+
+        except Exception as e:
+            self.root.after(0, self.on_failure, f"Screen capture failed: {str(e)}")
+            return
+        finally:
+            # Restore tester window
+            self.root.deiconify()
+
+        if screenshot:
+            self.display_image(screenshot, is_original=True)
+
+            buffer = io.BytesIO()
+            screenshot.save(buffer, format="JPEG", quality=90)
+            b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+            self.lbl_status.config(text="Sending full screenshot to ws://127.0.0.1:8000/ws...", fg="#dcdcaa")
+            threading.Thread(target=self.run_ws_query, args=(b64_data,), daemon=True).start()
 
     def run_ws_query(self, b64_image):
         async def query():

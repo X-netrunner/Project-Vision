@@ -1,9 +1,11 @@
 import base64
+import concurrent.futures
 import logging
+from typing import List, Tuple
 import cv2
 import numpy as np
 from blur_utils import apply_heavy_blur
-from face_detect import blur_faces
+from face_detect import detect_faces
 from ocr_engine import extract_text_blocks
 from pii_engine import find_pii_spans
 from config import (
@@ -17,36 +19,18 @@ from config import (
 )
 
 logger = logging.getLogger("VarunRedactor")
+EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
-def redact_image(b64_str: str) -> str:
-    """Decodes, redacts faces and sensitive form/PII data, and re-encodes to base64."""
-    if "," in b64_str:
-        b64_str = b64_str.split(",", 1)[1]
-
-    img_data = base64.b64decode(b64_str)
-    nparr = np.frombuffer(img_data, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-    del img_data, nparr
-
-    if img is None:
-        raise ValueError("Corrupt image data.")
-
+def _process_text_and_pii(img: np.ndarray) -> List[Tuple[int, int, int, int]]:
+    """Worker task: runs OCR and PII analysis, returning all text bounding boxes to blur."""
     h, w, _ = img.shape
-
-    # 1. Face Redaction
-    img = blur_faces(img)
-
-    # 2. Extract OCR Blocks
     blocks = extract_text_blocks(img)
     if not blocks:
-        _, buffer = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_COMPRESSION_QUALITY])
-        del img
-        out_b64 = f"data:image/jpeg;base64,{base64.b64encode(buffer).decode('utf-8')}"
-        del buffer
-        return out_b64
+        return []
 
-    # 3. Spatial Form Association (Vertical Form Fields)
+    blur_regions: List[Tuple[int, int, int, int]] = []
+
+    # 1. Spatial Form Association (Vertical Form Fields)
     for i, label_block in enumerate(blocks):
         lbl_lower = label_block["text"].lower().strip()
         if any(trig == lbl_lower or lbl_lower.startswith(trig) for trig in FORM_LABEL_TRIGGERS):
@@ -73,10 +57,10 @@ def redact_image(b64_str: str) -> str:
                     py2 = min(h, cy + ch + TEXT_PADDING_PX)
 
                     if px2 > px1 and py2 > py1:
-                        img[py1:py2, px1:px2] = apply_heavy_blur(img[py1:py2, px1:px2])
+                        blur_regions.append((px1, py1, px2, py2))
                         candidate["blurred"] = True
 
-    # 4. Inline Field Labels & Standalone Values
+    # 2. Inline Field Labels & Standalone Values
     for blk in blocks:
         if blk["blurred"]:
             continue
@@ -103,7 +87,7 @@ def redact_image(b64_str: str) -> str:
                     py2 = min(h, by + bh + TEXT_PADDING_PX)
 
                     if px2 > px1 and py2 > py1:
-                        img[py1:py2, px1:px2] = apply_heavy_blur(img[py1:py2, px1:px2])
+                        blur_regions.append((px1, py1, px2, py2))
                         blk["blurred"] = True
                         continue
 
@@ -120,10 +104,39 @@ def redact_image(b64_str: str) -> str:
                 py2 = min(h, by + bh + TEXT_PADDING_PX)
 
                 if px2 > px1 and py2 > py1:
-                    img[py1:py2, px1:px2] = apply_heavy_blur(img[py1:py2, px1:px2])
+                    blur_regions.append((px1, py1, px2, py2))
                     blk["blurred"] = True
 
-    # 5. Output JPEG Compression
+    return blur_regions
+
+def redact_image(b64_str: str) -> str:
+    """Decodes, runs face and OCR/PII detection in parallel threads, blurs, and re-encodes."""
+    if "," in b64_str:
+        b64_str = b64_str.split(",", 1)[1]
+
+    img_data = base64.b64decode(b64_str)
+    nparr = np.frombuffer(img_data, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    del img_data, nparr
+
+    if img is None:
+        raise ValueError("Corrupt image data.")
+
+    # Concurrently execute Face Detection and OCR + PII analysis
+    future_faces = EXECUTOR.submit(detect_faces, img)
+    future_text_regions = EXECUTOR.submit(_process_text_and_pii, img)
+
+    face_regions = future_faces.result()
+    text_regions = future_text_regions.result()
+
+    # Apply all blurs sequentially to the original canvas
+    for x1, y1, x2, y2 in face_regions + text_regions:
+        roi = img[y1:y2, x1:x2]
+        if roi.size > 0:
+            img[y1:y2, x1:x2] = apply_heavy_blur(roi)
+
+    # Output JPEG Compression
     _, buffer = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_COMPRESSION_QUALITY])
     del img
 
