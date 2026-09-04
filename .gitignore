@@ -31,3 +31,6 @@ Server\[unnati&srijan\]/**/*.txt
 [sS]erver*/logs/
 [sS]erver*/*.txt
 [sS]erver*/**/*.txt
+.DS_Store
+protoType/.DS_Store
+protoType/src/.DS_Store
