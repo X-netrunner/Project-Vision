@@ -1,0 +1,89 @@
+[INIT] Session log initialized: C:\Users\Sushanth\Documents\GitHub\Project-Vision\protoType\varun\logs\redactor_20260904_104510.log
+2026-09-04 10:45:13,122 [INFO] uvicorn.error: Started server process [19104]
+2026-09-04 10:45:13,123 [INFO] uvicorn.error: Waiting for application startup.
+2026-09-04 10:45:13,123 [INFO] uvicorn.error: Application startup complete.
+2026-09-04 10:45:13,123 [INFO] uvicorn.error: Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+2026-09-04 10:45:15,353 [INFO] uvicorn.error: 127.0.0.1:55850 - "WebSocket /ws" [accepted]
+2026-09-04 10:45:15,384 [INFO] uvicorn.error: connection open
+2026-09-04 10:45:15,384 [INFO] VarunRedactor: Client connected via ws://127.0.0.1:8000/ws
+2026-09-04 10:45:19,793 [INFO] VarunRedactor: Form Association: Blurring '1SIP' under 'Name'
+2026-09-04 10:45:20,091 [INFO] VarunRedactor: Redacted step 0 in 4691.9 ms
+2026-09-04 10:46:55,602 [INFO] VarunRedactor: Redacted step 0 in 3482.71 ms
+2026-09-04 10:47:32,609 [INFO] VarunRedactor: Redacted step 0 in 3828.53 ms
+2026-09-04 11:06:33,281 [INFO] VarunRedactor: Client disconnected.
+2026-09-04 11:18:49,706 [INFO] uvicorn.error: 127.0.0.1:54712 - "WebSocket /ws" [accepted]
+2026-09-04 11:18:49,706 [INFO] uvicorn.error: connection open
+2026-09-04 11:18:49,706 [INFO] VarunRedactor: Client connected via ws://127.0.0.1:8000/ws
+2026-09-04 11:18:53,379 [INFO] VarunRedactor: Redacted step 0 in 3645.02 ms
+2026-09-04 11:20:18,777 [INFO] VarunRedactor: Client disconnected.
+2026-09-04 11:20:24,727 [INFO] uvicorn.access: 127.0.0.1:50705 - "GET /health HTTP/1.1" 404
+2026-09-04 11:20:34,004 [INFO] uvicorn.access: 127.0.0.1:50241 - "GET /health HTTP/1.1" 404
+2026-09-04 11:20:39,018 [INFO] uvicorn.access: 127.0.0.1:50148 - "GET /health HTTP/1.1" 404
+2026-09-04 11:20:44,024 [INFO] uvicorn.access: 127.0.0.1:49387 - "GET /health HTTP/1.1" 404
+2026-09-04 11:20:49,011 [INFO] uvicorn.access: 127.0.0.1:49387 - "GET /health HTTP/1.1" 404
+2026-09-04 11:20:54,019 [INFO] uvicorn.access: 127.0.0.1:54169 - "GET /health HTTP/1.1" 404
+2026-09-04 11:20:59,019 [INFO] uvicorn.access: 127.0.0.1:54169 - "GET /health HTTP/1.1" 404
+2026-09-04 11:21:04,019 [INFO] uvicorn.access: 127.0.0.1:54169 - "GET /health HTTP/1.1" 404
+2026-09-04 11:39:30,424 [INFO] uvicorn.error: 127.0.0.1:50070 - "WebSocket /ws" [accepted]
+2026-09-04 11:39:30,424 [INFO] uvicorn.error: connection open
+2026-09-04 11:39:30,425 [INFO] VarunRedactor: Client connected via ws://127.0.0.1:8000/ws
+2026-09-04 11:39:34,574 [INFO] VarunRedactor: Redacted step 0 in 4139.46 ms
+2026-09-04 11:39:45,955 [INFO] VarunRedactor: Redacted step 0 in 3656.49 ms
+2026-09-04 11:40:15,966 [INFO] VarunRedactor: Client disconnected.
+2026-09-04 11:40:39,534 [INFO] uvicorn.error: 127.0.0.1:49740 - "WebSocket /ws" [accepted]
+2026-09-04 11:40:39,534 [INFO] uvicorn.error: connection open
+2026-09-04 11:40:39,535 [INFO] VarunRedactor: Client connected via ws://127.0.0.1:8000/ws
+2026-09-04 11:40:42,279 [INFO] VarunRedactor: Redacted step 0 in 2734.24 ms
+2026-09-04 11:41:21,811 [INFO] VarunRedactor: Client disconnected.
+2026-09-04 11:42:22,178 [INFO] uvicorn.error: 127.0.0.1:53082 - "WebSocket /ws" [accepted]
+2026-09-04 11:42:22,178 [INFO] uvicorn.error: connection open
+2026-09-04 11:42:22,178 [INFO] VarunRedactor: Client connected via ws://127.0.0.1:8000/ws
+2026-09-04 11:42:26,675 [INFO] VarunRedactor: Redacted step 0 in 4470.76 ms
+2026-09-04 11:43:05,934 [INFO] VarunRedactor: Client disconnected.
+2026-09-04 11:45:06,153 [INFO] uvicorn.error: 127.0.0.1:63136 - "WebSocket /ws" [accepted]
+2026-09-04 11:45:06,154 [INFO] uvicorn.error: connection open
+2026-09-04 11:45:06,154 [INFO] VarunRedactor: Client connected via ws://127.0.0.1:8000/ws
+2026-09-04 11:45:10,814 [INFO] VarunRedactor: Redacted step 0 in 4649.37 ms
+2026-09-04 11:45:23,617 [INFO] VarunRedactor: Redacted step 0 in 2048.26 ms
+2026-09-04 11:45:29,467 [INFO] VarunRedactor: Client disconnected.
+2026-09-04 12:01:19,198 [INFO] uvicorn.error: 127.0.0.1:59301 - "WebSocket /ws" [accepted]
+2026-09-04 12:01:19,199 [INFO] uvicorn.error: connection open
+2026-09-04 12:01:19,199 [INFO] VarunRedactor: Client connected via ws://127.0.0.1:8000/ws
+2026-09-04 12:01:22,266 [INFO] VarunRedactor: Redacted step 0 in 3061.31 ms
+2026-09-04 12:01:30,611 [INFO] VarunRedactor: Redacted step 0 in 1774.59 ms
+2026-09-04 12:01:51,785 [INFO] VarunRedactor: Redacted step 2 in 2161.36 ms
+2026-09-04 12:02:15,344 [INFO] VarunRedactor: Redacted step 3 in 2162.23 ms
+2026-09-04 12:02:39,467 [INFO] VarunRedactor: Redacted step 4 in 2728.21 ms
+2026-09-04 12:02:59,223 [INFO] VarunRedactor: Redacted step 5 in 2312.27 ms
+2026-09-04 12:03:26,603 [INFO] VarunRedactor: Redacted step 6 in 2400.19 ms
+2026-09-04 12:03:53,570 [INFO] VarunRedactor: Redacted step 7 in 2595.63 ms
+2026-09-04 12:04:13,132 [INFO] VarunRedactor: Redacted step 8 in 2006.13 ms
+2026-09-04 12:05:21,598 [INFO] VarunRedactor: Redacted step 0 in 1259.14 ms
+2026-09-04 12:05:29,786 [INFO] VarunRedactor: Redacted step 0 in 1794.14 ms
+2026-09-04 12:16:34,495 [INFO] VarunRedactor: Redacted step 0 in 2693.98 ms
+2026-09-04 12:17:01,287 [INFO] VarunRedactor: Redacted step 0 in 1323.54 ms
+2026-09-04 12:17:32,091 [INFO] VarunRedactor: Redacted step 2 in 2991.42 ms
+2026-09-04 12:21:08,615 [INFO] VarunRedactor: Redacted step 0 in 2031.19 ms
+2026-09-04 12:21:16,968 [INFO] VarunRedactor: Redacted step 0 in 1827.38 ms
+2026-09-04 12:21:43,525 [INFO] VarunRedactor: Redacted step 2 in 2953.86 ms
+2026-09-04 12:26:39,173 [INFO] VarunRedactor: Client disconnected.
+2026-09-04 12:28:49,273 [INFO] uvicorn.error: 127.0.0.1:60789 - "WebSocket /ws" [accepted]
+2026-09-04 12:28:49,273 [INFO] uvicorn.error: connection open
+2026-09-04 12:28:49,273 [INFO] VarunRedactor: Client connected via ws://127.0.0.1:8000/ws
+2026-09-04 12:28:50,792 [INFO] VarunRedactor: Redacted step 0 in 1499.11 ms
+2026-09-04 12:30:10,794 [INFO] VarunRedactor: Redacted step 0 in 1638.83 ms
+2026-09-04 12:30:46,906 [INFO] VarunRedactor: Redacted step 2 in 2067.25 ms
+2026-09-04 12:31:21,003 [INFO] VarunRedactor: Redacted step 3 in 2078.91 ms
+2026-09-04 12:32:03,009 [INFO] VarunRedactor: Redacted step 4 in 2061.84 ms
+2026-09-04 12:32:37,775 [INFO] VarunRedactor: Redacted step 5 in 2147.01 ms
+2026-09-04 12:32:57,371 [INFO] VarunRedactor: Redacted step 0 in 2201.28 ms
+2026-09-04 12:32:59,071 [INFO] VarunRedactor: Redacted step 6 in 1540.22 ms
+2026-09-04 12:33:08,099 [INFO] VarunRedactor: Form Association: Blurring 'Uniqu' under 'Mobiles'
+2026-09-04 12:33:08,445 [INFO] VarunRedactor: Redacted step 0 in 3771.57 ms
+2026-09-04 12:33:11,459 [INFO] VarunRedactor: Redacted step 1 in 2934.16 ms
+2026-09-04 12:33:14,891 [INFO] VarunRedactor: Redacted step 3 in 3347.67 ms
+2026-09-04 12:33:18,082 [INFO] VarunRedactor: Redacted step 4 in 3111.21 ms
+2026-09-04 12:33:48,753 [INFO] VarunRedactor: Form Association: Blurring 'with+GoogleGemini' under 'Mobiles'
+2026-09-04 12:33:48,964 [INFO] VarunRedactor: Redacted step 5 in 3084.81 ms
+2026-09-04 12:33:50,990 [INFO] VarunRedactor: Redacted step 5 in 1951.89 ms
+2026-09-04 12:36:53,367 [INFO] VarunRedactor: Client disconnected.
