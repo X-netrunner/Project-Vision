@@ -1,760 +1,1327 @@
-import type {
-  ChatMessage,
-} from "./types.js";
+import type { ChatMessage } from "./types.js";
 
-const messagesElement =
-  document.getElementById(
-    "messages"
-  ) as HTMLDivElement;
+const CHAT_STORAGE_KEY = "vision_chat_history";
 
-const promptElement =
-  document.getElementById(
-    "prompt"
-  ) as HTMLTextAreaElement;
+document.documentElement.style.width = "360px";
+document.documentElement.style.height = "520px";
 
-const sendButton =
-  document.getElementById(
-    "send"
-  ) as HTMLButtonElement;
+document.addEventListener("DOMContentLoaded", () => {
+  const settingsBtn =
+    document.getElementById("settingsBtn") as HTMLButtonElement | null;
 
-const clearButton =
-  document.getElementById(
-    "clear"
-  ) as HTMLButtonElement;
+  const settingsDropdown =
+    document.getElementById("settingsDropdown") as HTMLDivElement | null;
 
-const statusElement =
-  document.getElementById(
-    "status"
-  ) as HTMLDivElement;
+  const controlsToggleRow =
+    document.getElementById("controlsToggleRow") as HTMLElement | null;
 
-const screenshotButton =
-  document.getElementById(
-    "screenshot"
-  ) as HTMLButtonElement;
+  const controlsArrow =
+    document.getElementById("controlsArrow") as HTMLElement | null;
 
-const demoButton =
-  document.getElementById(
-    "demo"
-  ) as HTMLButtonElement;
+  const controlsPanel =
+    document.getElementById("controlsPanel") as HTMLElement | null;
 
-const debugToggle =
-  document.getElementById(
-    "debug-toggle"
-  ) as HTMLButtonElement;
+  const clearChatBtn =
+    document.getElementById("clearChatBtn") as HTMLButtonElement | null;
 
-const debugPanel =
-  document.getElementById(
-    "debug-panel"
-  ) as HTMLDivElement;
+  const themeToggleRow =
+    document.getElementById("themeToggleRow") as HTMLElement | null;
 
-const debugHealthButton =
-  document.getElementById(
-    "debug-health"
-  ) as HTMLButtonElement;
+  const themeSwitchTrack =
+    document.getElementById("themeSwitchTrack") as HTMLElement | null;
 
-const debugContextButton =
-  document.getElementById(
-    "debug-context"
-  ) as HTMLButtonElement;
+  const themeModeText =
+    document.getElementById("themeModeText") as HTMLSpanElement | null;
 
-const debugPingButton =
-  document.getElementById(
-    "debug-ping"
-  ) as HTMLButtonElement;
+  const ngrokToggleRow =
+    document.getElementById("ngrokToggleRow") as HTMLElement | null;
 
-const debugActionButton =
-  document.getElementById(
-    "debug-action"
-  ) as HTMLButtonElement;
+  const ngrokArrow =
+    document.getElementById("ngrokArrow") as HTMLElement | null;
 
-const debugVerbose =
-  document.getElementById(
-    "debug-verbose"
-  ) as HTMLInputElement;
+  const ngrokPanel =
+    document.getElementById("ngrokPanel") as HTMLElement | null;
 
-const srijanUrlElement = document.getElementById("srijan-url") as HTMLInputElement;
-const srijanSaveButton = document.getElementById("srijan-save") as HTMLButtonElement;
-const srijanReconnectButton = document.getElementById("srijan-reconnect") as HTMLButtonElement;
-const srijanConfigStatus = document.getElementById("srijan-config-status") as HTMLDivElement;
-const srijanConnectionStatus = document.getElementById("srijan-connection-status") as HTMLDivElement;
+  const srijanUrlElement =
+    document.getElementById("srijanUrl") as HTMLInputElement | null;
 
-let savedSrijanUrl = "";
-let currentSrijanStatus = "not_configured";
+  const srijanSaveButton =
+    document.getElementById(
+      "srijanUrlElement"
+    ) as HTMLButtonElement | null;
 
-function renderSrijanConnectionState(): void {
-  const enteredUrl = srijanUrlElement.value.trim();
-  const isConfigured = !!savedSrijanUrl;
-  const isDirty = enteredUrl !== savedSrijanUrl;
+  const reconnectBtn =
+    document.getElementById(
+      "reconnectBtn"
+    ) as HTMLButtonElement | null;
 
-  if (!isConfigured) {
-    srijanConfigStatus.textContent = isDirty && enteredUrl
-      ? "URL entered — click Save URL"
-      : "URL not configured";
-    srijanConfigStatus.dataset.state = isDirty && enteredUrl ? "dirty" : "empty";
-  } else if (isDirty) {
-    srijanConfigStatus.textContent = "Unsaved URL change";
-    srijanConfigStatus.dataset.state = "dirty";
-  } else {
-    srijanConfigStatus.textContent = "URL saved";
-    srijanConfigStatus.dataset.state = "saved";
+  const urlSavedStatus =
+    document.getElementById(
+      "urlSavedStatus"
+    ) as HTMLSpanElement | null;
+
+  const srijanConnStatus =
+    document.getElementById(
+      "srijanConnStatus"
+    ) as HTMLSpanElement | null;
+
+  const statusDot =
+    document.getElementById(
+      "statusDot"
+    ) as HTMLSpanElement | null;
+
+  const statusLabel =
+    document.getElementById(
+      "statusLabel"
+    ) as HTMLSpanElement | null;
+
+  const contentArea =
+    document.getElementById(
+      "contentArea"
+    ) as HTMLElement | null;
+
+  const chatThread =
+    document.getElementById(
+      "chatThread"
+    ) as HTMLElement | null;
+
+  const promptInput =
+    document.getElementById(
+      "promptInput"
+    ) as HTMLTextAreaElement | null;
+
+  const sendBtn =
+    document.getElementById(
+      "sendBtn"
+    ) as HTMLButtonElement | null;
+
+  let savedSrijanUrl = "";
+  let currentSrijanStatus = "not_configured";
+  let chatHistory: ChatMessage[] = [];
+
+  function storageGet<T = unknown>(
+    key: string
+  ): Promise<T | null> {
+    return new Promise((resolve) => {
+      if (
+        typeof chrome !== "undefined" &&
+        chrome.storage?.local
+      ) {
+        chrome.storage.local.get(
+          [key],
+          (result: Record<string, unknown>) => {
+            resolve(
+              (result[key] as T) ?? null
+            );
+          }
+        );
+
+        return;
+      }
+
+      try {
+        const value =
+          localStorage.getItem(key);
+
+        resolve(
+          value
+            ? JSON.parse(value)
+            : null
+        );
+      } catch {
+        resolve(null);
+      }
+    });
   }
 
-  const labels: Record<string, string> = {
-    not_configured: "Connection: NOT CONFIGURED",
-    invalid_url: "Connection: INVALID URL",
-    connecting: "Connection: CONNECTING…",
-    open: "Connection: CONNECTED",
-    closed: "Connection: CLOSED — reconnecting…",
-    error: "Connection: ERROR — check extension console",
-  };
-  srijanConnectionStatus.textContent = labels[currentSrijanStatus] ?? `Connection: ${currentSrijanStatus.toUpperCase()}`;
-  srijanConnectionStatus.dataset.state = currentSrijanStatus;
-}
+  function storageSet(
+    key: string,
+    value: unknown
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      if (
+        typeof chrome !== "undefined" &&
+        chrome.storage?.local
+      ) {
+        chrome.storage.local.set(
+          { [key]: value },
+          () => resolve()
+        );
 
-function updateSrijanStatus(status: string, url?: string): void {
-  currentSrijanStatus = status;
-  if (typeof url === "string" && url !== savedSrijanUrl) {
-    // Do not overwrite a URL the user is currently editing.
+        return;
+      }
+
+      try {
+        localStorage.setItem(
+          key,
+          JSON.stringify(value)
+        );
+      } catch {
+        // Ignore storage failures.
+      }
+
+      resolve();
+    });
   }
-  renderSrijanConnectionState();
-}
 
-function setStatus(
-  text: string
-): void {
-  statusElement.textContent =
-    text;
-}
-
-function createBubble(
-  message: ChatMessage
-): HTMLDivElement {
-  const wrapper =
-    document.createElement(
-      "div"
-    );
-
-  wrapper.className =
-    `message-row ${message.sender}`;
-
-  const bubble =
-    document.createElement(
-      "div"
-    );
-
-  bubble.className =
-    "message-bubble";
-
-  /*
-   * Sender label.
-   */
-  if (
-    message.sender !==
-    "user"
-  ) {
-    const label =
-      document.createElement(
-        "div"
-      );
-
-    label.className =
-      "message-label";
-
+  function setStatus(
+    text: string,
+    state:
+      | "ready"
+      | "running"
+      | "waiting"
+      | "error" = "ready"
+  ): void {
     if (
-      message.sender ===
-      "server"
+      !statusLabel ||
+      !statusDot
     ) {
-      label.textContent =
-        "Srijan";
-    } else {
-      label.textContent =
-        "System";
+      return;
     }
 
-    bubble.appendChild(
-      label
-    );
-  }
+    statusLabel.textContent =
+      text.toUpperCase();
 
-  /*
-   * Human-readable text.
-   */
-  if (
-    message.text
-  ) {
-    const text =
-      document.createElement(
-        "div"
-      );
-
-    text.className =
-      "message-text";
-
-    text.textContent =
-      message.text;
-
-    bubble.appendChild(
-      text
-    );
-  }
-
-  /*
-   * Screenshot.
-   *
-   * This is displayed if the received
-   * packet contains an image.
-   */
-  if (
-    message.image
-  ) {
-    const image =
-      document.createElement(
-        "img"
-      );
-
-    image.className =
-      "screenshot";
-
-    image.src =
-      message.image.startsWith(
-        "data:"
-      )
-        ? message.image
-        : `data:image/jpeg;base64,${message.image}`;
-
-    image.alt =
-      "Browser screenshot";
-
-    bubble.appendChild(
-      image
-    );
-  }
-
-  /*
-   * JSON display.
-   *
-   * The ORIGINAL JSON is displayed,
-   * not modified.
-   */
-  if (
-    message.raw !==
-      undefined &&
-    message.type !==
-      "AGENT_ACTION"
-  ) {
-    const details =
-      document.createElement(
-        "details"
-      );
-
-    details.className =
-      "json-details";
-
-    const summary =
-      document.createElement(
-        "summary"
-      );
-
-    summary.textContent =
-      "View JSON";
-
-    const pre =
-      document.createElement(
-        "pre"
-      );
-
-    pre.textContent =
-      JSON.stringify(
-        message.raw,
-        null,
-        2
-      );
-
-    details.appendChild(
-      summary
-    );
-
-    details.appendChild(
-      pre
-    );
-
-    bubble.appendChild(
-      details
-    );
-  }
-
-  /*
-   * Agent action JSON can also be viewed.
-   */
-  if (
-    message.type ===
-      "AGENT_ACTION" &&
-    message.raw !==
-      undefined
-  ) {
-    const details =
-      document.createElement(
-        "details"
-      );
-
-    details.className =
-      "json-details";
-
-    const summary =
-      document.createElement(
-        "summary"
-      );
-
-    summary.textContent =
-      "View action JSON";
-
-    const pre =
-      document.createElement(
-        "pre"
-      );
-
-    pre.textContent =
-      JSON.stringify(
-        message.raw,
-        null,
-        2
-      );
-
-    details.appendChild(
-      summary
-    );
-
-    details.appendChild(
-      pre
-    );
-
-    bubble.appendChild(
-      details
-    );
-  }
-
-  wrapper.appendChild(
-    bubble
-  );
-
-  return wrapper;
-}
-
-function renderMessages(
-  messages: ChatMessage[]
-): void {
-  messagesElement.innerHTML =
-    "";
-
-  for (
-    const message of messages
-  ) {
-    messagesElement.appendChild(
-      createBubble(message)
-    );
-  }
-
-  scrollToBottom();
-}
-
-function appendMessage(
-  message: ChatMessage
-): void {
-  messagesElement.appendChild(
-    createBubble(message)
-  );
-
-  scrollToBottom();
-}
-
-function scrollToBottom(): void {
-  messagesElement.scrollTop =
-    messagesElement.scrollHeight;
-}
-
-async function loadSrijanConfig(): Promise<void> {
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "GET_SRIJAN_CONFIG" });
-    savedSrijanUrl = typeof response?.url === "string" ? response.url.trim() : "";
-    srijanUrlElement.value = savedSrijanUrl;
-    currentSrijanStatus = typeof response?.status === "string"
-      ? response.status
-      : (savedSrijanUrl ? "connecting" : "not_configured");
-    renderSrijanConnectionState();
-    if (savedSrijanUrl) {
-      setStatus("Srijan URL loaded. Waiting for connection status…");
-    }
-  } catch (error) {
-    currentSrijanStatus = "invalid_url";
-    renderSrijanConnectionState();
-    setStatus(error instanceof Error ? error.message : String(error));
-  }
-}
-
-async function saveSrijanConfig(): Promise<void> {
-  const url = srijanUrlElement.value.trim();
-  srijanSaveButton.disabled = true;
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "SET_SRIJAN_CONFIG", url });
-    if (response?.success) {
-      savedSrijanUrl = typeof response.url === "string" ? response.url.trim() : "";
-      srijanUrlElement.value = savedSrijanUrl;
-      currentSrijanStatus = savedSrijanUrl ? "connecting" : "not_configured";
-      renderSrijanConnectionState();
-      setStatus(savedSrijanUrl
-        ? "Srijan URL saved. Connecting…"
-        : "Srijan URL cleared.");
-      await chrome.runtime.sendMessage({ type: "RECONNECT_SRIJAN" });
-    } else {
-      setStatus(response?.error ?? "Could not save Srijan URL.");
-      currentSrijanStatus = "invalid_url";
-      renderSrijanConnectionState();
-    }
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error));
-  } finally {
-    srijanSaveButton.disabled = false;
-  }
-}
-
-async function reconnectSrijan(): Promise<void> {
-  const enteredUrl = srijanUrlElement.value.trim();
-  if (enteredUrl !== savedSrijanUrl) {
-    setStatus("Save the URL first, then reconnect.");
-    renderSrijanConnectionState();
-    return;
-  }
-  currentSrijanStatus = savedSrijanUrl ? "connecting" : "not_configured";
-  renderSrijanConnectionState();
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "RECONNECT_SRIJAN" });
-    setStatus(response?.success === false ? (response.error ?? "Reconnect failed.") : "Srijan reconnect requested.");
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error));
-  }
-}
-
-async function loadMessages(): Promise<void> {
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "GET_CHAT_MESSAGES",
-      });
+    statusDot.className =
+      "pulse-dot";
 
     if (
-      !response?.success
+      state === "ready"
+    ) {
+      statusDot.style.background =
+        "var(--accent-emerald)";
+    } else if (
+      state === "running"
+    ) {
+      statusDot.style.background =
+        "var(--accent-violet)";
+    } else if (
+      state === "waiting"
+    ) {
+      statusDot.classList.add(
+        "waiting"
+      );
+
+      statusDot.style.background =
+        "var(--accent-amber)";
+    } else {
+      statusDot.classList.add(
+        "error"
+      );
+
+      statusDot.style.background =
+        "var(--accent-rose)";
+    }
+  }
+
+  /*
+   * SETTINGS MENU
+   */
+
+  settingsBtn?.addEventListener(
+    "click",
+    (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      settingsDropdown?.classList.toggle(
+        "active"
+      );
+    }
+  );
+
+  settingsDropdown?.addEventListener(
+    "click",
+    (event: MouseEvent) => {
+      event.stopPropagation();
+    }
+  );
+
+  document.addEventListener(
+    "click",
+    () => {
+      settingsDropdown?.classList.remove(
+        "active"
+      );
+    }
+  );
+
+  controlsToggleRow?.addEventListener(
+    "click",
+    (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const expanded =
+        controlsPanel?.classList.toggle(
+          "expanded"
+        );
+
+      if (
+        controlsArrow
+      ) {
+        controlsArrow.textContent =
+          expanded
+            ? "▼"
+            : "▶";
+      }
+    }
+  );
+
+  ngrokToggleRow?.addEventListener(
+    "click",
+    (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const expanded =
+        ngrokPanel?.classList.toggle(
+          "expanded"
+        );
+
+      if (
+        ngrokArrow
+      ) {
+        ngrokArrow.textContent =
+          expanded
+            ? "▼"
+            : "▶";
+      }
+    }
+  );
+
+  /*
+   * THEME
+   */
+
+  function applyTheme(
+    isLight: boolean
+  ): void {
+    const theme =
+      isLight
+        ? "light"
+        : "dark";
+
+    document.documentElement.setAttribute(
+      "data-theme",
+      theme
+    );
+
+    themeSwitchTrack?.classList.toggle(
+      "on",
+      isLight
+    );
+
+    if (
+      themeModeText
+    ) {
+      themeModeText.textContent =
+        isLight
+          ? "On (Light)"
+          : "Off (Default Dark)";
+    }
+
+    void storageSet(
+      "isLightMode",
+      isLight
+    );
+  }
+
+  themeToggleRow?.addEventListener(
+    "click",
+    () => {
+      const isLight =
+        document.documentElement.getAttribute(
+          "data-theme"
+        ) === "light";
+
+      applyTheme(
+        !isLight
+      );
+    }
+  );
+
+  void storageGet<boolean>(
+    "isLightMode"
+  ).then((savedTheme) => {
+    applyTheme(
+      savedTheme === true
+    );
+  });
+
+  /*
+   * SRIJAN CONNECTION
+   */
+
+  function renderSrijanConnectionState(): void {
+    if (
+      !srijanUrlElement
+    ) {
+      return;
+    }
+
+    const enteredUrl =
+      srijanUrlElement.value.trim();
+
+    const isConfigured =
+      Boolean(savedSrijanUrl);
+
+    const isDirty =
+      enteredUrl !== savedSrijanUrl;
+
+    if (
+      urlSavedStatus
+    ) {
+      if (
+        !isConfigured
+      ) {
+        if (
+          isDirty &&
+          enteredUrl
+        ) {
+          urlSavedStatus.textContent =
+            "URL entered — click Save URL";
+        } else {
+          urlSavedStatus.textContent =
+            "URL not configured";
+        }
+
+        urlSavedStatus.style.color =
+          "var(--accent-amber)";
+      } else if (
+        isDirty
+      ) {
+        urlSavedStatus.textContent =
+          "Unsaved URL change";
+
+        urlSavedStatus.style.color =
+          "var(--accent-amber)";
+      } else {
+        urlSavedStatus.textContent =
+          "URL saved ✓";
+
+        urlSavedStatus.style.color =
+          "var(--accent-emerald)";
+      }
+    }
+
+    const labels:
+      Record<string, string> = {
+        not_configured:
+          "NOT CONFIGURED",
+
+        invalid_url:
+          "INVALID URL",
+
+        connecting:
+          "CONNECTING…",
+
+        open:
+          "CONNECTED",
+
+        closed:
+          "CLOSED",
+
+        error:
+          "ERROR"
+      };
+
+    if (
+      srijanConnStatus
+    ) {
+      srijanConnStatus.textContent =
+        labels[
+          currentSrijanStatus
+        ] ??
+        currentSrijanStatus.toUpperCase();
+
+      if (
+        currentSrijanStatus ===
+        "open"
+      ) {
+        srijanConnStatus.style.color =
+          "var(--accent-emerald)";
+
+        setStatus(
+          "Ready",
+          "ready"
+        );
+      } else if (
+        currentSrijanStatus ===
+        "connecting"
+      ) {
+        srijanConnStatus.style.color =
+          "var(--accent-cyan)";
+
+        setStatus(
+          "Connecting",
+          "waiting"
+        );
+      } else if (
+        currentSrijanStatus ===
+        "not_configured"
+      ) {
+        srijanConnStatus.style.color =
+          "var(--accent-amber)";
+
+        setStatus(
+          "Offline",
+          "waiting"
+        );
+      } else {
+        srijanConnStatus.style.color =
+          "var(--accent-rose)";
+
+        setStatus(
+          "Offline",
+          "error"
+        );
+      }
+    }
+  }
+
+  function updateSrijanStatus(
+    status: string,
+    url?: string
+  ): void {
+    currentSrijanStatus =
+      status;
+
+    /*
+     * Only populate the URL automatically
+     * if the user has not already configured one.
+     */
+    if (
+      typeof url === "string" &&
+      !savedSrijanUrl
+    ) {
+      savedSrijanUrl =
+        url.trim();
+
+      if (
+        srijanUrlElement
+      ) {
+        srijanUrlElement.value =
+          savedSrijanUrl;
+      }
+    }
+
+    renderSrijanConnectionState();
+  }
+
+  async function loadSrijanConfig(): Promise<void> {
+    try {
+      const response =
+        await chrome.runtime.sendMessage({
+          type:
+            "GET_SRIJAN_CONFIG"
+        });
+
+      savedSrijanUrl =
+        typeof response?.url === "string"
+          ? response.url.trim()
+          : "";
+
+      if (
+        srijanUrlElement
+      ) {
+        srijanUrlElement.value =
+          savedSrijanUrl;
+      }
+
+      currentSrijanStatus =
+        typeof response?.status === "string"
+          ? response.status
+          : savedSrijanUrl
+            ? "connecting"
+            : "not_configured";
+
+      renderSrijanConnectionState();
+    } catch {
+      currentSrijanStatus =
+        "error";
+
+      renderSrijanConnectionState();
+    }
+  }
+
+  async function saveSrijanConfig(): Promise<void> {
+    if (
+      !srijanUrlElement
+    ) {
+      return;
+    }
+
+    const url =
+      srijanUrlElement.value.trim();
+
+    if (
+      srijanSaveButton
+    ) {
+      srijanSaveButton.disabled =
+        true;
+    }
+
+    try {
+      const response =
+        await chrome.runtime.sendMessage({
+          type:
+            "SET_SRIJAN_CONFIG",
+
+          url
+        });
+
+      if (
+        response?.success
+      ) {
+        savedSrijanUrl =
+          typeof response.url ===
+          "string"
+            ? response.url.trim()
+            : "";
+
+        srijanUrlElement.value =
+          savedSrijanUrl;
+
+        currentSrijanStatus =
+          savedSrijanUrl
+            ? "connecting"
+            : "not_configured";
+
+        renderSrijanConnectionState();
+
+        await chrome.runtime.sendMessage({
+          type:
+            "RECONNECT_SRIJAN"
+        });
+      } else {
+        currentSrijanStatus =
+          "invalid_url";
+
+        renderSrijanConnectionState();
+      }
+    } catch {
+      currentSrijanStatus =
+        "error";
+
+      renderSrijanConnectionState();
+    } finally {
+      if (
+        srijanSaveButton
+      ) {
+        srijanSaveButton.disabled =
+          false;
+      }
+    }
+  }
+
+  async function reconnectSrijan(): Promise<void> {
+    if (
+      !srijanUrlElement
+    ) {
+      return;
+    }
+
+    const enteredUrl =
+      srijanUrlElement.value.trim();
+
+    if (
+      enteredUrl !== savedSrijanUrl
     ) {
       setStatus(
+        "Save URL first",
+        "waiting"
+      );
+
+      renderSrijanConnectionState();
+
+      return;
+    }
+
+    currentSrijanStatus =
+      savedSrijanUrl
+        ? "connecting"
+        : "not_configured";
+
+    renderSrijanConnectionState();
+
+    try {
+      await chrome.runtime.sendMessage({
+        type:
+          "RECONNECT_SRIJAN"
+      });
+    } catch {
+      currentSrijanStatus =
+        "error";
+
+      renderSrijanConnectionState();
+    }
+  }
+
+  srijanUrlElement?.addEventListener(
+    "input",
+    renderSrijanConnectionState
+  );
+
+  srijanSaveButton?.addEventListener(
+    "click",
+    () => {
+      void saveSrijanConfig();
+    }
+  );
+
+  reconnectBtn?.addEventListener(
+    "click",
+    () => {
+      void reconnectSrijan();
+    }
+  );
+
+  /*
+   * CHAT RENDERING
+   */
+
+  function scrollToBottom(): void {
+    if (
+      contentArea
+    ) {
+      contentArea.scrollTop =
+        contentArea.scrollHeight;
+    }
+  }
+
+  function createBubble(
+    message: ChatMessage
+  ): HTMLDivElement {
+    const wrapper =
+      document.createElement(
+        "div"
+      );
+
+    wrapper.className =
+      `message-row ${message.sender}`;
+
+    const bubble =
+      document.createElement(
+        "div"
+      );
+
+    bubble.className =
+      "message-bubble";
+
+    /*
+     * Sender label.
+     */
+    if (
+      message.sender !==
+      "user"
+    ) {
+      const label =
+        document.createElement(
+          "div"
+        );
+
+      label.className =
+        "message-label";
+
+      if (
+        message.sender ===
+        "server"
+      ) {
+        label.textContent =
+          "Srijan";
+      } else {
+        label.textContent =
+          "System";
+      }
+
+      bubble.appendChild(
+        label
+      );
+    }
+
+    /*
+     * Human-readable text.
+     */
+    if (
+      message.text
+    ) {
+      const text =
+        document.createElement(
+          "div"
+        );
+
+      text.className =
+        "message-text";
+
+      text.textContent =
+        message.text;
+
+      bubble.appendChild(
+        text
+      );
+    }
+
+    /*
+     * Screenshot.
+     *
+     * This displays the exact screenshot
+     * received from the backend.
+     */
+    if (
+      message.image
+    ) {
+      const image =
+        document.createElement(
+          "img"
+        );
+
+      image.className =
+        "screenshot";
+
+      image.src =
+        message.image.startsWith(
+          "data:"
+        )
+          ? message.image
+          : `data:image/jpeg;base64,${message.image}`;
+
+      image.alt =
+        "Browser screenshot";
+
+      bubble.appendChild(
+        image
+      );
+    }
+
+    /*
+     * JSON payload.
+     *
+     * Keep the original raw payload.
+     */
+    if (
+      message.raw !==
+      undefined
+    ) {
+      const details =
+        document.createElement(
+          "details"
+        );
+
+      details.className =
+        "json-details";
+
+      const summary =
+        document.createElement(
+          "summary"
+        );
+
+      summary.textContent =
+        message.type ===
+        "AGENT_ACTION"
+          ? "View action JSON"
+          : "View JSON";
+
+      const pre =
+        document.createElement(
+          "pre"
+        );
+
+      pre.textContent =
+        JSON.stringify(
+          message.raw,
+          null,
+          2
+        );
+
+      details.appendChild(
+        summary
+      );
+
+      details.appendChild(
+        pre
+      );
+
+      bubble.appendChild(
+        details
+      );
+    }
+
+    wrapper.appendChild(
+      bubble
+    );
+
+    return wrapper;
+  }
+
+  function renderMessages(
+    messages: ChatMessage[]
+  ): void {
+    if (
+      !chatThread
+    ) {
+      return;
+    }
+
+    chatThread.innerHTML =
+      "";
+
+    for (
+      const message of messages
+    ) {
+      chatThread.appendChild(
+        createBubble(
+          message
+        )
+      );
+    }
+
+    scrollToBottom();
+  }
+
+  async function saveChatMemory(): Promise<void> {
+    await storageSet(
+      CHAT_STORAGE_KEY,
+      chatHistory
+    );
+  }
+
+  function hasMessage(
+    message: ChatMessage
+  ): boolean {
+    return chatHistory.some(
+      (existingMessage) =>
+        existingMessage.id ===
+        message.id
+    );
+  }
+
+  function appendChatMessage(
+    message: ChatMessage,
+    persist = true
+  ): void {
+    /*
+     * Prevent duplicate messages.
+     */
+    if (
+      hasMessage(message)
+    ) {
+      return;
+    }
+
+    chatHistory.push(
+      message
+    );
+
+    if (
+      chatThread
+    ) {
+      chatThread.appendChild(
+        createBubble(
+          message
+        )
+      );
+    }
+
+    scrollToBottom();
+
+    if (
+      persist
+    ) {
+      void saveChatMemory();
+    }
+  }
+
+  function createDefaultMessage(): ChatMessage {
+    return {
+      id:
+        crypto.randomUUID(),
+
+      sender:
+        "system",
+
+      timestamp:
+        Date.now(),
+
+      type:
+        "SYSTEM",
+
+      text:
+        "Agent Ready. Enter instructions below to dispatch browser directives."
+    };
+  }
+
+  /*
+   * FIRST LOAD CHAT FROM BACKGROUND.
+   *
+   * bg.ts remains the primary source of
+   * truth for the chat history.
+   */
+  async function loadMessages(): Promise<void> {
+    try {
+      const response =
+        await chrome.runtime.sendMessage({
+          type:
+            "GET_CHAT_MESSAGES"
+        });
+
+      if (
+        response?.success &&
+        Array.isArray(
+          response.messages
+        )
+      ) {
+        chatHistory =
+          response.messages;
+
+        /*
+         * Fall back to local storage only
+         * if background history is empty.
+         */
+        if (
+          chatHistory.length === 0
+        ) {
+          const localMessages =
+            await storageGet<
+              ChatMessage[]
+            >(
+              CHAT_STORAGE_KEY
+            );
+
+          if (
+            Array.isArray(
+              localMessages
+            ) &&
+            localMessages.length > 0
+          ) {
+            chatHistory =
+              localMessages;
+          }
+        }
+
+        /*
+         * Add the default system message
+         * only if there is absolutely
+         * no existing history.
+         */
+        if (
+          chatHistory.length === 0
+        ) {
+          chatHistory = [
+            createDefaultMessage()
+          ];
+        }
+
+        renderMessages(
+          chatHistory
+        );
+
+        await saveChatMemory();
+
+        return;
+      }
+
+      throw new Error(
+        response?.error ??
         "Could not load chat."
       );
+    } catch {
+      /*
+       * Background unavailable.
+       * Recover from local memory.
+       */
+      const localMessages =
+        await storageGet<
+          ChatMessage[]
+        >(
+          CHAT_STORAGE_KEY
+        );
 
-      return;
+      if (
+        Array.isArray(
+          localMessages
+        ) &&
+        localMessages.length > 0
+      ) {
+        chatHistory =
+          localMessages;
+      } else {
+        chatHistory = [
+          createDefaultMessage()
+        ];
+      }
+
+      renderMessages(
+        chatHistory
+      );
     }
-
-    renderMessages(
-      response.messages ?? []
-    );
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
-    );
-  }
-}
-
-async function sendPrompt(): Promise<void> {
-  const prompt =
-    promptElement.value.trim();
-
-  if (!prompt) {
-    return;
   }
 
-  promptElement.value =
-    "";
+  /*
+   * PROMPT DISPATCH
+   */
 
-  sendButton.disabled =
-    true;
-
-  setStatus(
-    "Sending to Srijan..."
-  );
-
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "START_AGENT",
-        prompt,
-      });
-
+  async function sendPrompt(): Promise<void> {
     if (
-      response?.success
-    ) {
-      setStatus(
-        "Agent running..."
-      );
-    } else {
-      setStatus(
-        response?.error ??
-          "Failed to start agent."
-      );
-    }
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
-    );
-  } finally {
-    sendButton.disabled =
-      false;
-
-    promptElement.focus();
-  }
-}
-
-async function clearChat(): Promise<void> {
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "CLEAR_CHAT",
-      });
-
-    if (
-      response?.success
-    ) {
-      messagesElement.innerHTML =
-        "";
-
-      setStatus(
-        "Chat cleared."
-      );
-    }
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
-    );
-  }
-}
-
-async function testScreenshot(): Promise<void> {
-  setStatus(
-    "Capturing screenshot..."
-  );
-
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "LOCAL_SCREENSHOT_TEST",
-      });
-
-    if (
-      response?.success
-    ) {
-      setStatus(
-        "Screenshot sent."
-      );
-    } else {
-      setStatus(
-        response?.error ??
-          "Screenshot failed."
-      );
-    }
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
-    );
-  }
-}
-
-async function runDemo(): Promise<void> {
-  setStatus(
-    "Running demo..."
-  );
-
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "DEMO_ACTION",
-      });
-
-    if (
-      response?.success
-    ) {
-      setStatus(
-        "Demo executed."
-      );
-    } else {
-      setStatus(
-        response?.error ??
-          "Demo failed."
-      );
-    }
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
-    );
-  }
-}
-
-async function debugRequest(type: string, extra: Record<string, unknown> = {}): Promise<void> {
-  setStatus(`Debug: ${type}...`);
-  try {
-    const response = await chrome.runtime.sendMessage({ type, ...extra });
-    if (debugVerbose.checked) {
-      appendMessage({
-        id: crypto.randomUUID(),
-        sender: "system",
-        timestamp: Date.now(),
-        type: "DEBUG_RESULT",
-        text: JSON.stringify(response, null, 2),
-        raw: response,
-      });
-    }
-    setStatus(
-      response?.success
-        ? `Debug: ${type} passed.`
-        : `Debug: ${response?.error ?? "failed"}`
-    );
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error));
-  }
-}
-
-srijanUrlElement.addEventListener("input", () => {
-  renderSrijanConnectionState();
-});
-
-srijanSaveButton.addEventListener("click", () => {
-  void saveSrijanConfig();
-});
-
-srijanReconnectButton.addEventListener("click", () => {
-  void reconnectSrijan();
-});
-
-debugToggle.addEventListener("click", () => {
-  debugPanel.hidden = !debugPanel.hidden;
-});
-
-debugHealthButton.addEventListener("click", () => {
-  void debugRequest("DEBUG_LOCAL_SERVER_HEALTH");
-});
-
-debugContextButton.addEventListener("click", () => {
-  void debugRequest("DEBUG_INITIAL_CONTEXT", {
-    prompt: "Debug test: send the current page context with its initial screenshot.",
-  });
-});
-
-debugPingButton.addEventListener("click", () => {
-  void debugRequest("DEBUG_NATIVE_HOST_PING");
-});
-
-debugActionButton.addEventListener("click", () => {
-  void debugRequest("DEBUG_CONTENT_PING");
-});
-
-/*
- * New JSON message from background.
- */
-chrome.runtime.onMessage.addListener(
-  (
-    message
-  ) => {
-    if (message?.type === "SRIJAN_STATUS") {
-      updateSrijanStatus(
-        typeof message.status === "string" ? message.status : "unknown",
-        typeof message.url === "string" ? message.url : undefined
-      );
-      return;
-    }
-
-    if (
-      message?.type !==
-      "CHAT_MESSAGE"
+      !promptInput
     ) {
       return;
     }
 
-    const chatMessage =
-      message.message as ChatMessage;
+    const prompt =
+      promptInput.value.trim();
 
-    appendMessage(
-      chatMessage
+    if (
+      !prompt
+    ) {
+      return;
+    }
+
+    promptInput.value =
+      "";
+
+    if (
+      sendBtn
+    ) {
+      sendBtn.disabled =
+        true;
+    }
+
+    setStatus(
+      "Executing",
+      "running"
     );
 
-    if (
-      chatMessage.type ===
-      "CONNECTION_STATUS"
+    try {
+      const response =
+        await chrome.runtime.sendMessage({
+          type:
+            "START_AGENT",
+
+          prompt
+        });
+
+      if (
+        response?.success
+      ) {
+        setStatus(
+          "Agent running",
+          "running"
+        );
+      } else {
+        setStatus(
+          response?.error ??
+          "Failed to start agent",
+          "error"
+        );
+      }
+    } catch (
+      error
     ) {
       setStatus(
-        chatMessage.text ??
-          ""
+        error instanceof Error
+          ? error.message
+          : "Error",
+        "error"
       );
+    } finally {
+      if (
+        sendBtn
+      ) {
+        sendBtn.disabled =
+          false;
+      }
+
+      promptInput.focus();
     }
   }
-);
 
-/*
- * Enter = send.
- * Shift + Enter = newline.
- */
-promptElement.addEventListener(
-  "keydown",
-  (event) => {
-    if (
-      event.key === "Enter" &&
-      !event.shiftKey
-    ) {
-      event.preventDefault();
-
+  sendBtn?.addEventListener(
+    "click",
+    () => {
       void sendPrompt();
     }
+  );
+
+  promptInput?.addEventListener(
+    "keydown",
+    (
+      event:
+        KeyboardEvent
+    ) => {
+      if (
+        event.key ===
+        "Enter" &&
+        !event.shiftKey
+      ) {
+        event.preventDefault();
+
+        void sendPrompt();
+      }
+    }
+  );
+
+  /*
+   * CLEAR CHAT
+   */
+
+  clearChatBtn?.addEventListener(
+    "click",
+    () => {
+      void clearChat();
+    }
+  );
+
+  async function clearChat(): Promise<void> {
+    try {
+      const response =
+        await chrome.runtime.sendMessage({
+          type:
+            "CLEAR_CHAT"
+        });
+
+      if (
+        response?.success === false
+      ) {
+        setStatus(
+          response.error ??
+          "Could not clear chat",
+          "error"
+        );
+
+        return;
+      }
+    } catch {
+      /*
+       * Still clear local memory if the
+       * background is temporarily unavailable.
+       */
+    }
+
+    chatHistory =
+      [
+        createDefaultMessage()
+      ];
+
+    await saveChatMemory();
+
+    renderMessages(
+      chatHistory
+    );
+
+    setStatus(
+      "Chat cleared",
+      "ready"
+    );
   }
-);
 
-sendButton.addEventListener(
-  "click",
-  () => {
-    void sendPrompt();
+  /*
+   * BACKGROUND EVENTS
+   */
+
+  if (
+    typeof chrome !==
+    "undefined" &&
+    chrome.runtime?.onMessage
+  ) {
+    chrome.runtime.onMessage.addListener(
+      (
+        message: unknown
+      ) => {
+        if (
+          !message ||
+          typeof message !==
+          "object"
+        ) {
+          return;
+        }
+
+        const packet =
+          message as Record<
+            string,
+            unknown
+          >;
+
+        if (
+          packet.type ===
+          "SRIJAN_STATUS"
+        ) {
+          updateSrijanStatus(
+            typeof packet.status ===
+            "string"
+              ? packet.status
+              : "unknown",
+
+            typeof packet.url ===
+            "string"
+              ? packet.url
+              : undefined
+          );
+
+          return;
+        }
+
+        if (
+          packet.type !==
+          "CHAT_MESSAGE" ||
+          !packet.message
+        ) {
+          return;
+        }
+
+        const chatMessage =
+          packet.message as ChatMessage;
+
+        /*
+         * IMPORTANT:
+         *
+         * Persist incoming backend messages.
+         * This includes screenshots,
+         * JSON payloads and agent actions.
+         */
+        appendChatMessage(
+          chatMessage,
+          true
+        );
+
+        if (
+          chatMessage.type ===
+          "CONNECTION_STATUS"
+        ) {
+          setStatus(
+            chatMessage.text ??
+            "Connection update",
+            "waiting"
+          );
+        } else if (
+          chatMessage.type ===
+          "CONNECTION_ERROR" ||
+          chatMessage.type ===
+          "VARUN_ERROR"
+        ) {
+          setStatus(
+            "Error",
+            "error"
+          );
+        } else if (
+          chatMessage.type ===
+          "AGENT_ACTION"
+        ) {
+          setStatus(
+            "Action executed",
+            "ready"
+          );
+        }
+      }
+    );
   }
-);
 
-clearButton.addEventListener(
-  "click",
-  () => {
-    void clearChat();
-  }
-);
+  /*
+   * INITIALIZE
+   */
 
-screenshotButton.addEventListener(
-  "click",
-  () => {
-    void testScreenshot();
-  }
-);
+  void loadMessages();
+  void loadSrijanConfig();
 
-demoButton.addEventListener(
-  "click",
-  () => {
-    void runDemo();
-  }
-);
-
-void loadMessages();
-void loadSrijanConfig();
-
-promptElement.focus();
+  promptInput?.focus();
+});

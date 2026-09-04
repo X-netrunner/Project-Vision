@@ -1,0 +1,54 @@
+[INIT] Session log initialized: C:\Users\KIIT0001\Documents\GitHub\Project-Vision\protoType\varun\logs\redactor_20260904_161935.log
+[PRE-FLIGHT] Detected GUI 'opencv-python' alongside headless build -- reinstalling opencv-python-headless cleanly...
+[PRE-FLIGHT] cv2 resolved to a clean headless build.
+
+2026-09-04 16:19:50,083 [INFO] uvicorn.error: Started server process [5192]
+2026-09-04 16:19:50,084 [INFO] uvicorn.error: Waiting for application startup.
+2026-09-04 16:19:50,084 [INFO] uvicorn.error: Application startup complete.
+2026-09-04 16:19:50,085 [INFO] uvicorn.error: Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+2026-09-04 16:43:02,859 [INFO] uvicorn.error: 127.0.0.1:61517 - "WebSocket /ws" [accepted]
+2026-09-04 16:43:02,860 [INFO] VarunRedactor: Client connected via ws://127.0.0.1:8000/ws
+2026-09-04 16:43:02,861 [INFO] uvicorn.error: connection open
+2026-09-04 16:43:09,613 [INFO] VarunRedactor: Redacted step 0 in 6733.08 ms
+2026-09-04 16:45:56,794 [INFO] VarunRedactor: Redacted step 0 in 6356.08 ms
+2026-09-04 16:50:25,684 [INFO] VarunRedactor: Client disconnected.
+2026-09-04 16:56:05,584 [INFO] uvicorn.error: connection closed
+2026-09-04 16:56:54,121 [INFO] uvicorn.error: 127.0.0.1:50585 - "WebSocket /ws" [accepted]
+2026-09-04 16:56:54,121 [INFO] VarunRedactor: Client connected via ws://127.0.0.1:8000/ws
+2026-09-04 16:56:54,123 [INFO] uvicorn.error: connection open
+2026-09-04 16:57:19,470 [INFO] VarunRedactor: Redacted step 0 in 25213.14 ms
+2026-09-04 16:57:45,304 [INFO] VarunRedactor: Redacted step 0 in 24241.25 ms
+2026-09-04 16:57:56,638 [ERROR] asyncio: ConnectionClosedError exception in shielded future
+future: <Future finished exception=ConnectionClosedError(None, Close(code=<CloseCode.INTERNAL_ERROR: 1011>, reason='keepalive ping timeout'), None)>
+Traceback (most recent call last):
+  File "C:\Users\KIIT0001\AppData\Roaming\Python\Python314\site-packages\websockets\legacy\protocol.py", line 1276, in close_connection
+    await self.transfer_data_task
+  File "C:\Users\KIIT0001\AppData\Roaming\Python\Python314\site-packages\websockets\legacy\protocol.py", line 940, in transfer_data
+    message = await self.read_message()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KIIT0001\AppData\Roaming\Python\Python314\site-packages\websockets\legacy\protocol.py", line 1067, in read_message
+    frame = await self.read_data_frame(max_size=max_size)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KIIT0001\AppData\Roaming\Python\Python314\site-packages\websockets\legacy\protocol.py", line 1087, in read_data_frame
+    frame = await self.read_frame(max_size)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KIIT0001\AppData\Roaming\Python\Python314\site-packages\websockets\legacy\protocol.py", line 1144, in read_frame
+    frame = await Frame.read(
+            ^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "C:\Users\KIIT0001\AppData\Roaming\Python\Python314\site-packages\websockets\legacy\framing.py", line 100, in read
+    data = await reader(length)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\Python314\Lib\asyncio\streams.py", line 769, in readexactly
+    await self._wait_for_data('readexactly')
+  File "C:\Program Files\Python314\Lib\asyncio\streams.py", line 539, in _wait_for_data
+    await self._waiter
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+websockets.exceptions.ConnectionClosedError: sent 1011 (internal error) keepalive ping timeout; no close frame received
+2026-09-04 16:57:56,742 [INFO] VarunRedactor: Client disconnected.
+2026-09-04 16:57:56,925 [INFO] uvicorn.error: connection closed

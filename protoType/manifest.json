@@ -4,11 +4,26 @@
   "version": "1.0.0",
   "description": "Privacy-preserving visual browser agent.",
   "permissions": [
-    "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "tabs",
+    "storage",
+    "offscreen",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:8000/*",
+    "https://*.ngrok-free.app/*"
   ],
   "action": {
     "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "dist/bg.js",
+    "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' ws: wss: http://127.0.0.1:8000 https://*.ngrok-free.app"
   }
 }
