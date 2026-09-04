@@ -57,6 +57,7 @@ TARGET_PII_ENTITIES = [
     "US_SSN",
     "US_BANK_NUMBER",
     "IP_ADDRESS",
+    "LOCATION"
 ]
 
 # Blur & Compression Parameters

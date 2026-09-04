@@ -1,3 +1,4 @@
+import threading
 from typing import List, Dict, Any
 import cv2
 import numpy as np
@@ -5,9 +6,13 @@ from rapidocr_onnxruntime import RapidOCR
 
 ocr = RapidOCR()
 
+
+_ocr_lock = threading.Lock()
+
 def extract_text_blocks(img: np.ndarray) -> List[Dict[str, Any]]:
-    """Runs RapidOCR and returns normalized blocks with text and bounding boxes."""
-    ocr_results, _ = ocr(img)
+    with _ocr_lock:
+        ocr_results, _ = ocr(img)
+
     if not ocr_results:
         return []
 
