@@ -1,760 +1,355 @@
-import type {
-  ChatMessage,
-} from "./types.js";
+export {};
 
-const messagesElement =
-  document.getElementById(
-    "messages"
-  ) as HTMLDivElement;
+document.documentElement.style.width = "360px";
+document.documentElement.style.height = "520px";
+document.body.style.width = "360px";
+document.body.style.height = "520px";
 
-const promptElement =
-  document.getElementById(
-    "prompt"
-  ) as HTMLTextAreaElement;
-
-const sendButton =
-  document.getElementById(
-    "send"
-  ) as HTMLButtonElement;
-
-const clearButton =
-  document.getElementById(
-    "clear"
-  ) as HTMLButtonElement;
-
-const statusElement =
-  document.getElementById(
-    "status"
-  ) as HTMLDivElement;
-
-const screenshotButton =
-  document.getElementById(
-    "screenshot"
-  ) as HTMLButtonElement;
-
-const demoButton =
-  document.getElementById(
-    "demo"
-  ) as HTMLButtonElement;
-
-const debugToggle =
-  document.getElementById(
-    "debug-toggle"
-  ) as HTMLButtonElement;
-
-const debugPanel =
-  document.getElementById(
-    "debug-panel"
-  ) as HTMLDivElement;
-
-const debugHealthButton =
-  document.getElementById(
-    "debug-health"
-  ) as HTMLButtonElement;
-
-const debugContextButton =
-  document.getElementById(
-    "debug-context"
-  ) as HTMLButtonElement;
-
-const debugPingButton =
-  document.getElementById(
-    "debug-ping"
-  ) as HTMLButtonElement;
-
-const debugActionButton =
-  document.getElementById(
-    "debug-action"
-  ) as HTMLButtonElement;
-
-const debugVerbose =
-  document.getElementById(
-    "debug-verbose"
-  ) as HTMLInputElement;
-
-const srijanUrlElement = document.getElementById("srijan-url") as HTMLInputElement;
-const srijanSaveButton = document.getElementById("srijan-save") as HTMLButtonElement;
-const srijanReconnectButton = document.getElementById("srijan-reconnect") as HTMLButtonElement;
-const srijanConfigStatus = document.getElementById("srijan-config-status") as HTMLDivElement;
-const srijanConnectionStatus = document.getElementById("srijan-connection-status") as HTMLDivElement;
-
-let savedSrijanUrl = "";
-let currentSrijanStatus = "not_configured";
-
-function renderSrijanConnectionState(): void {
-  const enteredUrl = srijanUrlElement.value.trim();
-  const isConfigured = !!savedSrijanUrl;
-  const isDirty = enteredUrl !== savedSrijanUrl;
-
-  if (!isConfigured) {
-    srijanConfigStatus.textContent = isDirty && enteredUrl
-      ? "URL entered — click Save URL"
-      : "URL not configured";
-    srijanConfigStatus.dataset.state = isDirty && enteredUrl ? "dirty" : "empty";
-  } else if (isDirty) {
-    srijanConfigStatus.textContent = "Unsaved URL change";
-    srijanConfigStatus.dataset.state = "dirty";
-  } else {
-    srijanConfigStatus.textContent = "URL saved";
-    srijanConfigStatus.dataset.state = "saved";
-  }
-
-  const labels: Record<string, string> = {
-    not_configured: "Connection: NOT CONFIGURED",
-    invalid_url: "Connection: INVALID URL",
-    connecting: "Connection: CONNECTING…",
-    open: "Connection: CONNECTED",
-    closed: "Connection: CLOSED — reconnecting…",
-    error: "Connection: ERROR — check extension console",
-  };
-  srijanConnectionStatus.textContent = labels[currentSrijanStatus] ?? `Connection: ${currentSrijanStatus.toUpperCase()}`;
-  srijanConnectionStatus.dataset.state = currentSrijanStatus;
+interface StorageCallback<T = any> {
+  (value: T): void;
 }
 
-function updateSrijanStatus(status: string, url?: string): void {
-  currentSrijanStatus = status;
-  if (typeof url === "string" && url !== savedSrijanUrl) {
-    // Do not overwrite a URL the user is currently editing.
-  }
-  renderSrijanConnectionState();
-}
-
-function setStatus(
-  text: string
-): void {
-  statusElement.textContent =
-    text;
-}
-
-function createBubble(
-  message: ChatMessage
-): HTMLDivElement {
-  const wrapper =
-    document.createElement(
-      "div"
-    );
-
-  wrapper.className =
-    `message-row ${message.sender}`;
-
-  const bubble =
-    document.createElement(
-      "div"
-    );
-
-  bubble.className =
-    "message-bubble";
-
-  /*
-   * Sender label.
-   */
-  if (
-    message.sender !==
-    "user"
-  ) {
-    const label =
-      document.createElement(
-        "div"
-      );
-
-    label.className =
-      "message-label";
-
-    if (
-      message.sender ===
-      "server"
-    ) {
-      label.textContent =
-        "Srijan";
+const storage = {
+  get: (key: string, cb: StorageCallback): void => {
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      chrome.storage.local.get([key], (res: Record<string, any>) => cb(res[key] ?? null));
     } else {
-      label.textContent =
-        "System";
+      cb(localStorage.getItem(key));
     }
-
-    bubble.appendChild(
-      label
-    );
-  }
-
-  /*
-   * Human-readable text.
-   */
-  if (
-    message.text
-  ) {
-    const text =
-      document.createElement(
-        "div"
-      );
-
-    text.className =
-      "message-text";
-
-    text.textContent =
-      message.text;
-
-    bubble.appendChild(
-      text
-    );
-  }
-
-  /*
-   * Screenshot.
-   *
-   * This is displayed if the received
-   * packet contains an image.
-   */
-  if (
-    message.image
-  ) {
-    const image =
-      document.createElement(
-        "img"
-      );
-
-    image.className =
-      "screenshot";
-
-    image.src =
-      message.image.startsWith(
-        "data:"
-      )
-        ? message.image
-        : `data:image/jpeg;base64,${message.image}`;
-
-    image.alt =
-      "Browser screenshot";
-
-    bubble.appendChild(
-      image
-    );
-  }
-
-  /*
-   * JSON display.
-   *
-   * The ORIGINAL JSON is displayed,
-   * not modified.
-   */
-  if (
-    message.raw !==
-      undefined &&
-    message.type !==
-      "AGENT_ACTION"
-  ) {
-    const details =
-      document.createElement(
-        "details"
-      );
-
-    details.className =
-      "json-details";
-
-    const summary =
-      document.createElement(
-        "summary"
-      );
-
-    summary.textContent =
-      "View JSON";
-
-    const pre =
-      document.createElement(
-        "pre"
-      );
-
-    pre.textContent =
-      JSON.stringify(
-        message.raw,
-        null,
-        2
-      );
-
-    details.appendChild(
-      summary
-    );
-
-    details.appendChild(
-      pre
-    );
-
-    bubble.appendChild(
-      details
-    );
-  }
-
-  /*
-   * Agent action JSON can also be viewed.
-   */
-  if (
-    message.type ===
-      "AGENT_ACTION" &&
-    message.raw !==
-      undefined
-  ) {
-    const details =
-      document.createElement(
-        "details"
-      );
-
-    details.className =
-      "json-details";
-
-    const summary =
-      document.createElement(
-        "summary"
-      );
-
-    summary.textContent =
-      "View action JSON";
-
-    const pre =
-      document.createElement(
-        "pre"
-      );
-
-    pre.textContent =
-      JSON.stringify(
-        message.raw,
-        null,
-        2
-      );
-
-    details.appendChild(
-      summary
-    );
-
-    details.appendChild(
-      pre
-    );
-
-    bubble.appendChild(
-      details
-    );
-  }
-
-  wrapper.appendChild(
-    bubble
-  );
-
-  return wrapper;
-}
-
-function renderMessages(
-  messages: ChatMessage[]
-): void {
-  messagesElement.innerHTML =
-    "";
-
-  for (
-    const message of messages
-  ) {
-    messagesElement.appendChild(
-      createBubble(message)
-    );
-  }
-
-  scrollToBottom();
-}
-
-function appendMessage(
-  message: ChatMessage
-): void {
-  messagesElement.appendChild(
-    createBubble(message)
-  );
-
-  scrollToBottom();
-}
-
-function scrollToBottom(): void {
-  messagesElement.scrollTop =
-    messagesElement.scrollHeight;
-}
-
-async function loadSrijanConfig(): Promise<void> {
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "GET_SRIJAN_CONFIG" });
-    savedSrijanUrl = typeof response?.url === "string" ? response.url.trim() : "";
-    srijanUrlElement.value = savedSrijanUrl;
-    currentSrijanStatus = typeof response?.status === "string"
-      ? response.status
-      : (savedSrijanUrl ? "connecting" : "not_configured");
-    renderSrijanConnectionState();
-    if (savedSrijanUrl) {
-      setStatus("Srijan URL loaded. Waiting for connection status…");
-    }
-  } catch (error) {
-    currentSrijanStatus = "invalid_url";
-    renderSrijanConnectionState();
-    setStatus(error instanceof Error ? error.message : String(error));
-  }
-}
-
-async function saveSrijanConfig(): Promise<void> {
-  const url = srijanUrlElement.value.trim();
-  srijanSaveButton.disabled = true;
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "SET_SRIJAN_CONFIG", url });
-    if (response?.success) {
-      savedSrijanUrl = typeof response.url === "string" ? response.url.trim() : "";
-      srijanUrlElement.value = savedSrijanUrl;
-      currentSrijanStatus = savedSrijanUrl ? "connecting" : "not_configured";
-      renderSrijanConnectionState();
-      setStatus(savedSrijanUrl
-        ? "Srijan URL saved. Connecting…"
-        : "Srijan URL cleared.");
-      await chrome.runtime.sendMessage({ type: "RECONNECT_SRIJAN" });
+  },
+  set: (key: string, val: any): void => {
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      chrome.storage.local.set({ [key]: val });
     } else {
-      setStatus(response?.error ?? "Could not save Srijan URL.");
-      currentSrijanStatus = "invalid_url";
-      renderSrijanConnectionState();
+      localStorage.setItem(key, typeof val === "string" ? val : JSON.stringify(val));
     }
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error));
-  } finally {
-    srijanSaveButton.disabled = false;
   }
-}
+};
 
-async function reconnectSrijan(): Promise<void> {
-  const enteredUrl = srijanUrlElement.value.trim();
-  if (enteredUrl !== savedSrijanUrl) {
-    setStatus("Save the URL first, then reconnect.");
-    renderSrijanConnectionState();
-    return;
+document.addEventListener("DOMContentLoaded", () => {
+  // Navigation & Dropdown elements
+  const settingsBtn = document.getElementById("settingsBtn") as HTMLButtonElement | null;
+  const settingsDropdown = document.getElementById("settingsDropdown") as HTMLDivElement | null;
+
+  // Theme controls
+  const themeToggleRow = document.getElementById("themeToggleRow") as HTMLDivElement | null;
+  const themeSwitchTrack = document.getElementById("themeSwitchTrack") as HTMLDivElement | null;
+  const themeModeText = document.getElementById("themeModeText") as HTMLSpanElement | null;
+
+  // ngrok / Server setup controls
+  const ngrokToggleRow = document.getElementById("ngrokToggleRow") as HTMLDivElement | null;
+  const ngrokArrow = document.getElementById("ngrokArrow") as HTMLSpanElement | null;
+  const ngrokPanel = document.getElementById("ngrokPanel") as HTMLDivElement | null;
+  const srijanUrl = document.getElementById("srijanUrl") as HTMLInputElement | null;
+  const srijanUrlElement = document.getElementById("srijanUrlElement") as HTMLButtonElement | null;
+  const reconnectBtn = document.getElementById("reconnectBtn") as HTMLButtonElement | null;
+  const urlSavedStatus = document.getElementById("urlSavedStatus") as HTMLSpanElement | null;
+  const srijanConnStatus = document.getElementById("srijanConnStatus") as HTMLSpanElement | null;
+
+  // HUD & Execution indicators
+  const statusDot = document.getElementById("statusDot") as HTMLSpanElement | null;
+  const statusLabel = document.getElementById("statusLabel") as HTMLSpanElement | null;
+  const pauseBtn = document.getElementById("pauseBtn") as HTMLButtonElement | null;
+  const abortBtn = document.getElementById("abortBtn") as HTMLButtonElement | null;
+
+  // Chat stream elements
+  const contentArea = document.getElementById("contentArea") as HTMLElement | null;
+  const chatThread = document.getElementById("chatThread") as HTMLDivElement | null;
+  const planSection = document.getElementById("planSection") as HTMLElement | null;
+  const goalTitle = document.getElementById("goalTitle") as HTMLDivElement | null;
+  const stepList = document.getElementById("stepList") as HTMLUListElement | null;
+  const taskCount = document.getElementById("taskCount") as HTMLSpanElement | null;
+  const promptInput = document.getElementById("promptInput") as HTMLInputElement | null;
+  const sendBtn = document.getElementById("sendBtn") as HTMLButtonElement | null;
+
+  /* -------------------------------------------------------------
+     1. Dropdown and Flyout Toggles
+  ------------------------------------------------------------- */
+  settingsBtn?.addEventListener("click", (e: MouseEvent) => {
+    e.stopPropagation();
+    settingsDropdown?.classList.toggle("active");
+  });
+
+  settingsDropdown?.addEventListener("click", (e: MouseEvent) => {
+    e.stopPropagation();
+  });
+
+  document.addEventListener("click", () => {
+    settingsDropdown?.classList.remove("active");
+  });
+
+  ngrokToggleRow?.addEventListener("click", (e: MouseEvent) => {
+    e.stopPropagation();
+    const isExpanded = ngrokPanel?.classList.toggle("expanded");
+    if (ngrokArrow) {
+      ngrokArrow.textContent = isExpanded ? "▼" : "▶";
+    }
+  });
+
+  /* -------------------------------------------------------------
+     2. Theme Configuration (Default: Dark, Toggled ON: Light)
+  ------------------------------------------------------------- */
+  function applyTheme(isLight: boolean): void {
+    const themeName = isLight ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", themeName);
+
+    if (themeSwitchTrack) {
+      themeSwitchTrack.classList.toggle("on", isLight);
+    }
+    if (themeModeText) {
+      themeModeText.textContent = isLight ? "On (Light)" : "Off (Default Dark)";
+    }
+
+    storage.set("isLightMode", isLight);
   }
-  currentSrijanStatus = savedSrijanUrl ? "connecting" : "not_configured";
-  renderSrijanConnectionState();
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "RECONNECT_SRIJAN" });
-    setStatus(response?.success === false ? (response.error ?? "Reconnect failed.") : "Srijan reconnect requested.");
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error));
+
+  themeToggleRow?.addEventListener("click", () => {
+    const isCurrentlyLight = document.documentElement.getAttribute("data-theme") === "light";
+    applyTheme(!isCurrentlyLight);
+  });
+
+  storage.get("isLightMode", (saved: any) => {
+    applyTheme(saved === true || saved === "true");
+  });
+
+  /* -------------------------------------------------------------
+     3. Dual Connection Health Check (app.py & ngrok)
+        - GREEN:  Both Varun's app.py and ngrok are connected.
+        - YELLOW: Only one of the two services is connected.
+        - RED:    Neither is connected / offline.
+  ------------------------------------------------------------- */
+  let isAppPyOnline = false;
+  let isNgrokOnline = false;
+  let activeWs: WebSocket | null = null;
+  let healthPollInterval: number | null = null;
+
+  function updateStatusIndicator(): void {
+    if (!statusDot || !statusLabel) return;
+
+    if (isAppPyOnline && isNgrokOnline) {
+      statusDot.className = "pulse-dot";
+      statusDot.style.background = "var(--accent-emerald)";
+      statusDot.style.boxShadow = "0 0 5px var(--accent-emerald)";
+      statusLabel.textContent = "READY";
+      statusLabel.style.color = "var(--accent-emerald)";
+    } else if (isAppPyOnline || isNgrokOnline) {
+      statusDot.className = "pulse-dot waiting";
+      statusDot.style.background = "var(--accent-amber)";
+      statusDot.style.boxShadow = "0 0 5px var(--accent-amber)";
+      statusLabel.textContent = isAppPyOnline ? "NO NGROK" : "NO LOCAL";
+      statusLabel.style.color = "var(--accent-amber)";
+    } else {
+      statusDot.className = "pulse-dot";
+      statusDot.style.background = "var(--accent-rose)";
+      statusDot.style.boxShadow = "0 0 5px var(--accent-rose)";
+      statusLabel.textContent = "OFFLINE";
+      statusLabel.style.color = "var(--accent-rose)";
+    }
   }
-}
 
-async function loadMessages(): Promise<void> {
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "GET_CHAT_MESSAGES",
-      });
+  async function checkAppPyConnection(): Promise<boolean> {
+    const localPorts = [5000, 8000, 8080];
+    for (const port of localPorts) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1200);
+        const res = await fetch(`http://127.0.0.1:${port}/health`, {
+          method: "GET",
+          signal: controller.signal
+        }).catch(() => null);
+        clearTimeout(timeoutId);
 
-    if (
-      !response?.success
-    ) {
-      setStatus(
-        "Could not load chat."
-      );
+        if (res && (res.ok || res.status === 404)) {
+          return true;
+        }
+      } catch {
+        // Fallback to the next local port candidate
+      }
+    }
+    return false;
+  }
 
+  function checkNgrokSocket(url: string): void {
+    if (!url) {
+      isNgrokOnline = false;
+      if (srijanConnStatus) {
+        srijanConnStatus.textContent = "NO URL SPECIFIED";
+        srijanConnStatus.style.color = "var(--accent-amber)";
+      }
+      updateStatusIndicator();
       return;
     }
 
-    renderMessages(
-      response.messages ?? []
-    );
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
-    );
-  }
-}
+    try {
+      if (activeWs) {
+        activeWs.onopen = null;
+        activeWs.onerror = null;
+        activeWs.onclose = null;
+        activeWs.close();
+      }
 
-async function sendPrompt(): Promise<void> {
-  const prompt =
-    promptElement.value.trim();
+      activeWs = new WebSocket(url);
 
-  if (!prompt) {
-    return;
-  }
+      activeWs.onopen = () => {
+        isNgrokOnline = true;
+        if (srijanConnStatus) {
+          srijanConnStatus.textContent = "CONNECTED";
+          srijanConnStatus.style.color = "var(--accent-emerald)";
+        }
+        updateStatusIndicator();
+      };
 
-  promptElement.value =
-    "";
+      activeWs.onerror = () => {
+        isNgrokOnline = false;
+        if (srijanConnStatus) {
+          srijanConnStatus.textContent = "CONNECTION ERROR";
+          srijanConnStatus.style.color = "var(--accent-rose)";
+        }
+        updateStatusIndicator();
+      };
 
-  sendButton.disabled =
-    true;
-
-  setStatus(
-    "Sending to Srijan..."
-  );
-
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "START_AGENT",
-        prompt,
-      });
-
-    if (
-      response?.success
-    ) {
-      setStatus(
-        "Agent running..."
-      );
-    } else {
-      setStatus(
-        response?.error ??
-          "Failed to start agent."
-      );
+      activeWs.onclose = () => {
+        isNgrokOnline = false;
+        if (srijanConnStatus) {
+          srijanConnStatus.textContent = "CLOSED — reconnecting...";
+          srijanConnStatus.style.color = "var(--accent-amber)";
+        }
+        updateStatusIndicator();
+      };
+    } catch {
+      isNgrokOnline = false;
+      if (srijanConnStatus) {
+        srijanConnStatus.textContent = "FAILED TO CONNECT";
+        srijanConnStatus.style.color = "var(--accent-rose)";
+      }
+      updateStatusIndicator();
     }
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
-    );
-  } finally {
-    sendButton.disabled =
-      false;
-
-    promptElement.focus();
   }
-}
 
-async function clearChat(): Promise<void> {
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "CLEAR_CHAT",
-      });
-
-    if (
-      response?.success
-    ) {
-      messagesElement.innerHTML =
-        "";
-
-      setStatus(
-        "Chat cleared."
-      );
+  async function performFullHealthCheck(): Promise<void> {
+    isAppPyOnline = await checkAppPyConnection();
+    const wsUrl = srijanUrl?.value.trim() || srijanUrl?.getAttribute("placeholder") || "";
+    if (!activeWs || activeWs.readyState !== WebSocket.OPEN) {
+      checkNgrokSocket(wsUrl);
     }
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
-    );
+    updateStatusIndicator();
   }
-}
 
-async function testScreenshot(): Promise<void> {
-  setStatus(
-    "Capturing screenshot..."
-  );
-
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "LOCAL_SCREENSHOT_TEST",
-      });
-
-    if (
-      response?.success
-    ) {
-      setStatus(
-        "Screenshot sent."
-      );
-    } else {
-      setStatus(
-        response?.error ??
-          "Screenshot failed."
-      );
+  storage.get("srijanWsUrl", (savedUrl: string | null) => {
+    if (savedUrl && srijanUrl) {
+      srijanUrl.value = savedUrl;
     }
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
-    );
-  }
-}
+    performFullHealthCheck();
+    healthPollInterval = window.setInterval(performFullHealthCheck, 5000);
+  });
 
-async function runDemo(): Promise<void> {
-  setStatus(
-    "Running demo..."
-  );
+  srijanUrlElement?.addEventListener("click", () => {
+    const val = srijanUrl?.value.trim() || srijanUrl?.getAttribute("placeholder") || "";
+    if (!val) return;
 
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type:
-          "DEMO_ACTION",
-      });
-
-    if (
-      response?.success
-    ) {
-      setStatus(
-        "Demo executed."
-      );
-    } else {
-      setStatus(
-        response?.error ??
-          "Demo failed."
-      );
+    storage.set("srijanWsUrl", val);
+    if (urlSavedStatus) {
+      urlSavedStatus.textContent = "URL saved ✓";
+      setTimeout(() => {
+        if (urlSavedStatus) urlSavedStatus.textContent = "URL saved";
+      }, 2000);
     }
-  } catch (error) {
-    setStatus(
-      error instanceof Error
-        ? error.message
-        : String(error)
-    );
-  }
-}
 
-async function debugRequest(type: string, extra: Record<string, unknown> = {}): Promise<void> {
-  setStatus(`Debug: ${type}...`);
-  try {
-    const response = await chrome.runtime.sendMessage({ type, ...extra });
-    if (debugVerbose.checked) {
-      appendMessage({
-        id: crypto.randomUUID(),
-        sender: "system",
-        timestamp: Date.now(),
-        type: "DEBUG_RESULT",
-        text: JSON.stringify(response, null, 2),
-        raw: response,
-      });
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ action: "UPDATE_SRIJAN_URL", url: val }).catch(() => {});
     }
-    setStatus(
-      response?.success
-        ? `Debug: ${type} passed.`
-        : `Debug: ${response?.error ?? "failed"}`
-    );
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error));
+
+    checkNgrokSocket(val);
+  });
+
+  reconnectBtn?.addEventListener("click", () => {
+    if (srijanConnStatus) {
+      srijanConnStatus.textContent = "Connecting...";
+      srijanConnStatus.style.color = "var(--accent-cyan)";
+    }
+    const val = srijanUrl?.value.trim() || srijanUrl?.getAttribute("placeholder") || "";
+    checkNgrokSocket(val);
+  });
+
+  /* -------------------------------------------------------------
+     4. Chat Messaging & Blueprint Generation
+  ------------------------------------------------------------- */
+  function appendMessage(text: string, sender: "user" | "agent" = "user"): void {
+    if (!chatThread || !contentArea) return;
+    const bubble = document.createElement("div");
+    bubble.className = `chat-msg ${sender}`;
+    bubble.textContent = text;
+    chatThread.appendChild(bubble);
+    contentArea.scrollTop = contentArea.scrollHeight;
   }
-}
 
-srijanUrlElement.addEventListener("input", () => {
-  renderSrijanConnectionState();
-});
+  function dispatchMessage(): void {
+    const text = promptInput?.value.trim();
+    if (!text) return;
 
-srijanSaveButton.addEventListener("click", () => {
-  void saveSrijanConfig();
-});
+    appendMessage(text, "user");
+    if (promptInput) promptInput.value = "";
 
-srijanReconnectButton.addEventListener("click", () => {
-  void reconnectSrijan();
-});
+    if (statusLabel) statusLabel.textContent = "PLANNING...";
+    if (statusDot) {
+      statusDot.className = "pulse-dot waiting";
+      statusDot.style.background = "var(--accent-amber)";
+    }
 
-debugToggle.addEventListener("click", () => {
-  debugPanel.hidden = !debugPanel.hidden;
-});
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ action: "USER_PROMPT", prompt: text }).catch(() => {});
+    }
 
-debugHealthButton.addEventListener("click", () => {
-  void debugRequest("DEBUG_LOCAL_SERVER_HEALTH");
-});
+    setTimeout(() => {
+      appendMessage(`Analyzing objective: "${text}"... Blueprint generated below.`, "agent");
 
-debugContextButton.addEventListener("click", () => {
-  void debugRequest("DEBUG_INITIAL_CONTEXT", {
-    prompt: "Debug test: send the current page context with its initial screenshot.",
+      if (planSection) planSection.style.display = "block";
+      if (goalTitle) goalTitle.textContent = `Goal: ${text}`;
+      if (taskCount) taskCount.textContent = "3 Tasks";
+      if (statusLabel) statusLabel.textContent = "RUNNING";
+      if (statusDot) {
+        statusDot.className = "pulse-dot";
+        statusDot.style.background = "var(--accent-emerald)";
+      }
+      if (pauseBtn) pauseBtn.disabled = false;
+      if (abortBtn) abortBtn.disabled = false;
+
+      if (stepList) {
+        stepList.innerHTML = `
+          <li class="task-item running"><span class="item-icon">●</span><span>Inspecting DOM tree & target elements</span></li>
+          <li class="task-item pending"><span class="item-icon">○</span><span>Synthesizing parameters and comparing state</span></li>
+          <li class="task-item pending"><span class="item-icon">○</span><span>Execute browser interactions</span></li>
+        `;
+      }
+
+      if (contentArea) contentArea.scrollTop = contentArea.scrollHeight;
+    }, 450);
+  }
+
+  sendBtn?.addEventListener("click", dispatchMessage);
+  promptInput?.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      dispatchMessage();
+    }
+  });
+
+  abortBtn?.addEventListener("click", () => {
+    if (statusLabel) statusLabel.textContent = "ABORTED";
+    if (pauseBtn) pauseBtn.disabled = true;
+    if (abortBtn) abortBtn.disabled = true;
+    appendMessage("Pipeline execution halted by user.", "agent");
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ action: "ABORT" }).catch(() => {});
+    }
+  });
+
+  window.addEventListener("unload", () => {
+    if (healthPollInterval !== null) {
+      clearInterval(healthPollInterval);
+    }
+    if (activeWs) {
+      activeWs.close();
+    }
   });
 });
-
-debugPingButton.addEventListener("click", () => {
-  void debugRequest("DEBUG_NATIVE_HOST_PING");
-});
-
-debugActionButton.addEventListener("click", () => {
-  void debugRequest("DEBUG_CONTENT_PING");
-});
-
-/*
- * New JSON message from background.
- */
-chrome.runtime.onMessage.addListener(
-  (
-    message
-  ) => {
-    if (message?.type === "SRIJAN_STATUS") {
-      updateSrijanStatus(
-        typeof message.status === "string" ? message.status : "unknown",
-        typeof message.url === "string" ? message.url : undefined
-      );
-      return;
-    }
-
-    if (
-      message?.type !==
-      "CHAT_MESSAGE"
-    ) {
-      return;
-    }
-
-    const chatMessage =
-      message.message as ChatMessage;
-
-    appendMessage(
-      chatMessage
-    );
-
-    if (
-      chatMessage.type ===
-      "CONNECTION_STATUS"
-    ) {
-      setStatus(
-        chatMessage.text ??
-          ""
-      );
-    }
-  }
-);
-
-/*
- * Enter = send.
- * Shift + Enter = newline.
- */
-promptElement.addEventListener(
-  "keydown",
-  (event) => {
-    if (
-      event.key === "Enter" &&
-      !event.shiftKey
-    ) {
-      event.preventDefault();
-
-      void sendPrompt();
-    }
-  }
-);
-
-sendButton.addEventListener(
-  "click",
-  () => {
-    void sendPrompt();
-  }
-);
-
-clearButton.addEventListener(
-  "click",
-  () => {
-    void clearChat();
-  }
-);
-
-screenshotButton.addEventListener(
-  "click",
-  () => {
-    void testScreenshot();
-  }
-);
-
-demoButton.addEventListener(
-  "click",
-  () => {
-    void runDemo();
-  }
-);
-
-void loadMessages();
-void loadSrijanConfig();
-
-promptElement.focus();

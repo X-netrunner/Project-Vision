@@ -1,492 +1,674 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark" style="width: 360px !important; height: 520px !important; min-width: 360px !important; max-width: 360px !important; min-height: 520px !important; max-height: 520px !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; background: #07090E !important;">
 <head>
-  <meta charset="UTF-8">
-
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
-  >
-
-  <title>Project-Vision</title>
-
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=360, height=520, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Project Vision</title>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@800;900&display=swap');
+
+    :root, [data-theme="dark"] {
+      --bg-canvas: #0D111A;
+      --card-surface: rgba(22, 27, 38, 0.88);
+      --card-border: rgba(255, 255, 255, 0.12);
+      --text-pri: #F3F4F6;
+      --text-sec: #9CA3AF;
+      --input-bg: rgba(255, 255, 255, 0.06);
+
+      --accent-violet: #8B5CF6;
+      --accent-emerald: #10B981;
+      --accent-amber: #F59E0B;
+      --accent-rose: #F43F5E;
+      --accent-cyan: #06B6D4;
+      --accent-indigo: #6366F1;
+      --pill-active-bg: #8B5CF6;
+      --pill-active-text: #FFFFFF;
+
+      --edge-canvas-fill: radial-gradient(circle at 50% 0%, #2E1065 0%, #083344 40%, #07090E 90%);
+      --menu-bg: #141923;
+      --user-msg-bg: rgba(139, 92, 246, 0.22);
+      --user-msg-border: rgba(139, 92, 246, 0.45);
+      --agent-msg-bg: rgba(255, 255, 255, 0.05);
+      --agent-msg-border: rgba(255, 255, 255, 0.1);
+      --toggle-track: rgba(255, 255, 255, 0.16);
+    }
+
+    [data-theme="light"] {
+      --bg-canvas: #FFFFFF;
+      --card-surface: rgba(244, 246, 251, 0.92);
+      --card-border: rgba(0, 0, 0, 0.08);
+      --text-pri: #111827;
+      --text-sec: #6B7280;
+      --input-bg: rgba(0, 0, 0, 0.04);
+
+      --accent-violet: #7C3AED;
+      --accent-emerald: #059669;
+      --accent-amber: #D97706;
+      --accent-rose: #E11D48;
+      --accent-cyan: #0284C7;
+      --accent-indigo: #4F46E5;
+      --pill-active-bg: #7C3AED;
+      --pill-active-text: #FFFFFF;
+
+      --edge-canvas-fill: radial-gradient(circle at 50% 0%, #DDD6FE 0%, #CFFAFE 40%, #E2E8F0 90%);
+      --menu-bg: #FFFFFF;
+      --user-msg-bg: rgba(124, 58, 237, 0.12);
+      --user-msg-border: rgba(124, 58, 237, 0.3);
+      --agent-msg-bg: rgba(0, 0, 0, 0.04);
+      --agent-msg-border: rgba(0, 0, 0, 0.08);
+      --toggle-track: #8B5CF6;
+    }
+
     * {
       box-sizing: border-box;
-    }
-
-    html,
-    body {
       margin: 0;
       padding: 0;
-      width: 100%;
-      height: 100%;
+      outline: none;
     }
 
-    body {
-      width: 420px;
-      min-height: 600px;
-      font-family:
-        -apple-system,
-        BlinkMacSystemFont,
-        "Segoe UI",
-        Arial,
-        sans-serif;
+    html, body {
+      width: 360px !important;
+      height: 520px !important;
+      min-width: 360px !important;
+      max-width: 360px !important;
+      min-height: 520px !important;
+      max-height: 520px !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: hidden !important;
+      background: var(--edge-canvas-fill) !important;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
 
-      background: #ffffff;
-      color: #222;
+    .agent-shell {
+      width: calc(100% - 16px) !important;
+      height: calc(100% - 16px) !important;
+      max-width: calc(100% - 16px) !important;
+      max-height: calc(100% - 16px) !important;
+      box-sizing: border-box !important;
+      background: var(--bg-canvas) !important;
+      color: var(--text-pri) !important;
+      border-radius: 20px !important;
+      border: 1.5px solid rgba(139, 92, 246, 0.45) !important;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7), 0 0 25px rgba(139, 92, 246, 0.3) !important;
+      display: flex !important;
+      flex-direction: column !important;
+      position: relative !important;
+      overflow: hidden !important;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    .agent-shell::before {
+      content: "";
+      position: absolute;
+      top: -30px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 220px;
+      height: 80px;
+      background: radial-gradient(circle, rgba(139, 92, 246, 0.25) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .hud-bar {
+      height: 48px;
+      min-height: 48px;
+      padding: 0 10px;
       display: flex;
-      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--card-border);
+      background: var(--card-surface);
+      backdrop-filter: blur(12px);
+      z-index: 2;
     }
 
-    .header {
-      height: 58px;
-      padding: 12px 16px;
+    .brand-cluster {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
 
-      border-bottom: 1px solid #e5e5e5;
+    .brand-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      background: linear-gradient(135deg, #FFFFFF 20%, var(--accent-cyan) 60%, var(--accent-violet) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.4));
+      user-select: none;
+      white-space: nowrap;
+    }
 
+    [data-theme="light"] .brand-title {
+      background: linear-gradient(135deg, #0F172A 20%, var(--accent-violet) 70%, var(--accent-cyan) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      filter: none;
+    }
+
+    /* Retro Pixelated Eye SVG */
+    .pixel-eye {
+      display: block;
+      width: 15px;
+      height: 15px;
+      flex-shrink: 0;
+      filter: drop-shadow(0 0 4px rgba(6, 182, 212, 0.5));
+    }
+
+    .status-chip {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 8.5px;
+      font-weight: 800;
+      color: var(--accent-emerald);
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      padding: 1.5px 5px;
+      border-radius: 999px;
+    }
+
+    .pulse-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent-emerald);
+      box-shadow: 0 0 5px var(--accent-emerald);
+    }
+    .pulse-dot.waiting {
+      background: var(--accent-amber);
+      box-shadow: 0 0 5px var(--accent-amber);
+    }
+
+    .hud-actions {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      position: relative;
+    }
+
+    .btn-ghost, .btn-abort, .btn-icon {
+      border-radius: 6px;
+      font-size: 9.5px;
+      font-weight: 600;
+      padding: 3px 6px;
+      border: 1px solid var(--card-border);
+      cursor: pointer;
+    }
+
+    .btn-ghost {
+      background: var(--input-bg);
+      color: var(--text-pri);
+    }
+
+    .btn-abort {
+      background: rgba(244, 63, 94, 0.12);
+      border-color: rgba(244, 63, 94, 0.3);
+      color: var(--accent-rose);
+    }
+    .btn-abort:disabled, .btn-ghost:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+
+    .btn-icon {
+      background: var(--input-bg);
+      color: var(--text-sec);
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      font-size: 12px;
+      transition: color 0.15s ease, border-color 0.15s ease;
+    }
+    .btn-icon:hover {
+      color: var(--text-pri);
+      border-color: var(--accent-violet);
+    }
+
+    .settings-dropdown {
+      display: none;
+      position: absolute;
+      top: 32px;
+      right: 0;
+      background: var(--menu-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      width: 250px;
+      max-height: 400px;
+      overflow-y: auto;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+      z-index: 50;
+      backdrop-filter: blur(14px);
+    }
+    .settings-dropdown.active {
+      display: block;
+    }
+
+    .menu-item-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-
-      flex-shrink: 0;
-    }
-
-    .title {
-      font-size: 16px;
-      font-weight: 600;
-    }
-
-    .subtitle {
-      margin-top: 2px;
-      font-size: 11px;
-      color: #888;
-    }
-
-    #clear {
-      width: auto;
-      margin: 0;
-      padding: 6px 9px;
-
-      border: 1px solid #ddd;
-      border-radius: 6px;
-
-      background: #fff;
-      color: #555;
-
+      user-select: none;
       cursor: pointer;
+      padding: 4px 0;
     }
 
-    #clear:hover {
-      background: #f5f5f5;
+    .menu-divider {
+      height: 1px;
+      background: var(--card-border);
+      margin: 6px 0;
     }
 
-    #messages {
-      flex: 1;
-
-      overflow-y: auto;
-
-      padding: 16px 12px;
-
+    .theme-label-group {
       display: flex;
       flex-direction: column;
-      gap: 12px;
-
-      background: #fafafa;
+      gap: 1px;
     }
 
-    .message-row {
-      display: flex;
-      width: 100%;
-    }
-
-    .message-row.user {
-      justify-content: flex-end;
-    }
-
-    .message-row.server,
-    .message-row.system {
-      justify-content: flex-start;
-    }
-
-    .message-bubble {
-      max-width: 86%;
-
-      padding: 10px 12px;
-
-      border-radius: 12px;
-
-      font-size: 13px;
-      line-height: 1.45;
-
-      overflow-wrap: anywhere;
-    }
-
-    .message-row.user
-    .message-bubble {
-      background: #222;
-      color: white;
-
-      border-bottom-right-radius: 4px;
-    }
-
-    .message-row.server
-    .message-bubble {
-      background: white;
-      color: #222;
-
-      border: 1px solid #e5e5e5;
-
-      border-bottom-left-radius: 4px;
-    }
-
-    .message-row.system
-    .message-bubble {
-      background: #f0f0f0;
-      color: #666;
-
-      font-size: 12px;
-    }
-
-    .message-label {
-      margin-bottom: 5px;
-
-      font-size: 10px;
-      font-weight: 600;
-
-      color: #888;
-      text-transform: uppercase;
-    }
-
-    .message-text {
-      white-space: pre-wrap;
-    }
-
-    .json-details {
-      margin-top: 9px;
-
-      border-top: 1px solid #eee;
-      padding-top: 7px;
-    }
-
-    .json-details summary {
-      cursor: pointer;
-
-      color: #777;
-
+    .theme-title {
       font-size: 11px;
-    }
-
-    .json-details pre {
-      max-width: 100%;
-
-      margin-top: 7px;
-      padding: 8px;
-
-      overflow-x: auto;
-
-      background: #f5f5f5;
-
-      border-radius: 5px;
-
-      font-family:
-        "Cascadia Code",
-        "Consolas",
-        monospace;
-
-      font-size: 10px;
-      line-height: 1.4;
-
-      white-space: pre-wrap;
-    }
-
-    .screenshot {
-      display: block;
-
-      width: 100%;
-      max-height: 280px;
-
-      object-fit: contain;
-
-      margin-top: 8px;
-
-      border-radius: 7px;
-
-      border: 1px solid #ddd;
-    }
-
-    .composer {
-      padding: 10px;
-
-      border-top: 1px solid #e5e5e5;
-
-      background: white;
-
-      flex-shrink: 0;
-    }
-
-    .input-container {
-      display: flex;
-      align-items: flex-end;
-
-      gap: 8px;
-
-      padding: 8px;
-
-      border: 1px solid #ccc;
-
-      border-radius: 12px;
-
-      background: white;
-    }
-
-    #prompt {
-      flex: 1;
-
-      min-height: 38px;
-      max-height: 120px;
-
-      resize: none;
-
-      border: none;
-      outline: none;
-
-      font-family: inherit;
-      font-size: 13px;
-
-      line-height: 1.4;
-    }
-
-    #prompt::placeholder {
-      color: #999;
-    }
-
-    #send {
-      width: 34px;
-      height: 34px;
-
-      margin: 0;
-
-      padding: 0;
-
-      border: none;
-      border-radius: 8px;
-
-      background: #222;
-      color: white;
-
-      cursor: pointer;
-
-      font-size: 17px;
-    }
-
-    #send:hover {
-      opacity: 0.85;
-    }
-
-    #send:disabled {
-      opacity: 0.4;
-      cursor: default;
-    }
-
-    .tools {
-      display: flex;
-      gap: 6px;
-
-      margin-top: 7px;
-    }
-
-    .tool-button {
-      width: auto;
-
-      margin: 0;
-
-      padding: 5px 8px;
-
-      border: 1px solid #ddd;
-      border-radius: 5px;
-
-      background: white;
-      color: #666;
-
-      font-size: 10px;
-
-      cursor: pointer;
-    }
-
-    .tool-button:hover {
-      background: #f5f5f5;
-    }
-
-
-    #debug-panel {
-      margin-top: 8px;
-      padding: 8px;
-      border: 1px solid #e5e5e5;
-      border-radius: 8px;
-      background: #fafafa;
-    }
-
-    .debug-title {
-      margin-bottom: 7px;
-      font-size: 10px;
       font-weight: 700;
-      color: #777;
-      text-transform: uppercase;
+      color: var(--text-pri);
     }
 
-    .srijan-status {
-      margin-top: 5px;
-      font-size: 10px;
-      color: #777;
-      line-height: 1.3;
+    .theme-mode-text {
+      font-size: 9px;
+      color: var(--text-sec);
     }
 
-    #srijan-config-status[data-state="saved"] {
-      color: #4f7a52;
+    .switch-track {
+      width: 34px;
+      height: 18px;
+      background: rgba(255, 255, 255, 0.16);
+      border-radius: 999px;
+      position: relative;
+      transition: background 0.2s ease, border-color 0.2s ease;
+      cursor: pointer;
+      border: 1px solid var(--card-border);
     }
 
-    #srijan-config-status[data-state="dirty"] {
-      color: #9a6a00;
+    .switch-thumb {
+      width: 14px;
+      height: 14px;
+      background: #FFFFFF;
+      border-radius: 50%;
+      position: absolute;
+      top: 1px;
+      left: 1px;
+      transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
     }
 
-    #srijan-connection-status[data-state="open"] {
-      color: #2f7d32;
-      font-weight: 600;
+    .switch-track.on {
+      background: var(--accent-violet) !important;
+      border-color: var(--accent-violet) !important;
     }
 
-    #srijan-connection-status[data-state="connecting"] {
-      color: #8a6d1d;
+    .switch-track.on .switch-thumb {
+      transform: translateX(16px) !important;
     }
 
-    #srijan-connection-status[data-state="closed"],
-    #srijan-connection-status[data-state="invalid_url"] {
-      color: #a33;
-    }
-
-    .debug-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
+    .ngrok-panel {
+      display: none;
+      flex-direction: column;
       gap: 6px;
+      margin-top: 6px;
+      padding: 8px;
+      background: var(--input-bg);
+      border-radius: 6px;
+      border: 1px solid var(--card-border);
+    }
+    .ngrok-panel.expanded {
+      display: flex;
     }
 
-    .debug-check {
+    .ngrok-header-label {
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      color: var(--accent-cyan);
+    }
+
+    .ngrok-input {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--card-border);
+      border-radius: 5px;
+      padding: 6px 7px;
+      font-size: 10px;
+      color: var(--text-pri);
+      font-family: ui-monospace, monospace;
+    }
+
+    .ngrok-input::placeholder {
+      color: var(--text-sec);
+      opacity: 0.35;
+      font-style: italic;
+    }
+
+    .ngrok-status-line {
+      font-size: 9px;
+      color: var(--accent-amber);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .ngrok-btn-row {
+      display: flex;
+      gap: 5px;
+      margin-top: 2px;
+    }
+
+    .ngrok-btn {
+      flex: 1;
+      font-size: 9.5px;
+      font-weight: 600;
+      padding: 5px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--card-border);
+      background: var(--card-surface);
+      color: var(--text-pri);
+      cursor: pointer;
+    }
+    .ngrok-btn:hover {
+      border-color: var(--accent-violet);
+    }
+
+    .content-area {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 1;
+      scroll-behavior: smooth;
+    }
+
+    .terminal-thread {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      width: 100%;
+    }
+
+    .chat-msg {
+      max-width: 88%;
+      padding: 8px 11px;
+      font-size: 11px;
+      line-height: 1.4;
+      word-break: break-word;
+      animation: fadeInMsg 0.18s ease-out forwards;
+    }
+
+    @keyframes fadeInMsg {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .chat-msg.user {
+      align-self: flex-end;
+      background: var(--user-msg-bg);
+      border: 1px solid var(--user-msg-border);
+      border-radius: 12px 12px 2px 12px;
+      color: var(--text-pri);
+    }
+
+    .chat-msg.agent {
+      align-self: flex-start;
+      background: var(--agent-msg-bg);
+      border: 1px solid var(--agent-msg-border);
+      border-radius: 12px 12px 12px 2px;
+      color: var(--text-sec);
+    }
+
+    .chat-msg.agent strong {
+      color: var(--text-pri);
+    }
+
+    .card {
+      background: var(--card-surface);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 10px;
+      backdrop-filter: blur(16px);
+      margin-top: 4px;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+      font-size: 10px;
+    }
+
+    .gradient-tag {
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      background: linear-gradient(90deg, var(--accent-violet), var(--accent-cyan));
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .task-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-pri);
+      margin-bottom: 6px;
+    }
+
+    .task-checklist {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .task-item {
+      font-size: 10px;
       display: flex;
       align-items: center;
       gap: 6px;
-      margin-top: 8px;
-      font-size: 10px;
-      color: #666;
+      padding: 5px 8px;
+      border-radius: 6px;
+      color: var(--text-sec);
+      background: var(--input-bg);
     }
 
-    #status {
-      padding: 5px 2px 0;
+    .task-item.completed {
+      color: #6B7280;
+      text-decoration: line-through;
+    }
+    .task-item.completed .item-icon { color: var(--accent-emerald); }
 
-      font-size: 10px;
-      color: #999;
+    .task-item.running {
+      background: rgba(139, 92, 246, 0.15);
+      border: 1px solid rgba(139, 92, 246, 0.4);
+      color: var(--text-pri);
+      font-weight: 600;
+    }
+    .task-item.running .item-icon { color: var(--accent-violet); }
 
-      min-height: 18px;
+    .omnibar-footer {
+      padding: 10px 12px;
+      background: var(--card-surface);
+      border-top: 1px solid var(--card-border);
+      backdrop-filter: blur(12px);
+      z-index: 2;
+    }
+
+    .omnibar-wrap {
+      display: flex;
+      align-items: center;
+      background: var(--input-bg);
+      border: 1px solid rgba(139, 92, 246, 0.4);
+      border-radius: 12px;
+      padding: 6px 10px;
+      box-shadow: 0 0 14px rgba(139, 92, 246, 0.12);
+      gap: 8px;
+    }
+
+    .omnibar-wrap input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-pri);
+      outline: none;
+      font-size: 11px;
+    }
+
+    .omnibar-wrap input::placeholder {
+      color: var(--text-sec);
+    }
+
+    .send-pill {
+      background: linear-gradient(135deg, var(--accent-violet), var(--accent-cyan));
+      border: none;
+      color: #FFF;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      cursor: pointer;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      flex-shrink: 0;
+      transition: transform 0.1s ease;
+    }
+    .send-pill:active {
+      transform: scale(0.92);
     }
   </style>
 </head>
-
 <body>
 
-  <div class="header">
-    <div>
-      <div class="title">
-        Project-Vision
+  <div class="agent-shell">
+    <header class="hud-bar">
+      <div class="brand-cluster">
+        <!-- Title without hyphen -->
+        <span class="brand-title">PROJECT VISION</span>
+
+        <!-- Pixelated Eye Logo -->
+        <svg class="pixel-eye" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Pixel Outer Eye Frame -->
+          <rect x="5" y="3" width="6" height="1.5" fill="var(--accent-cyan)"/>
+          <rect x="3" y="4.5" width="2" height="1.5" fill="var(--accent-cyan)"/>
+          <rect x="11" y="4.5" width="2" height="1.5" fill="var(--accent-cyan)"/>
+          <rect x="1" y="6" width="2" height="4" fill="var(--accent-cyan)"/>
+          <rect x="13" y="6" width="2" height="4" fill="var(--accent-cyan)"/>
+          <rect x="3" y="10" width="2" height="1.5" fill="var(--accent-cyan)"/>
+          <rect x="11" y="10" width="2" height="1.5" fill="var(--accent-cyan)"/>
+          <rect x="5" y="11.5" width="6" height="1.5" fill="var(--accent-cyan)"/>
+          <!-- Pupil -->
+          <rect x="6" y="6" width="4" height="4" fill="var(--accent-violet)"/>
+          <!-- Pupil Glint -->
+          <rect x="6" y="6" width="1.5" height="1.5" fill="#FFFFFF"/>
+        </svg>
+
+        <div class="status-chip">
+          <span class="pulse-dot" id="statusDot"></span>
+          <span id="statusLabel">READY</span>
+        </div>
       </div>
 
-      <div class="subtitle">
-        On-device visual browser agent
-      </div>
-    </div>
+      <div class="hud-actions">
+        <button id="pauseBtn" class="btn-ghost" disabled>Pause</button>
+        <button id="abortBtn" class="btn-abort" disabled>Abort</button>
+        <button id="settingsBtn" class="btn-icon" title="Settings">⚙</button>
 
-    <button id="clear">
-      Clear
-    </button>
+        <div id="settingsDropdown" class="settings-dropdown">
+          
+          <!-- Theme Toggle -->
+          <div id="themeToggleRow" class="menu-item-row">
+            <div class="theme-label-group">
+              <span class="theme-title">Light Mode</span>
+              <span class="theme-mode-text" id="themeModeText">Off (Default Dark)</span>
+            </div>
+            <div class="switch-track" id="themeSwitchTrack">
+              <div class="switch-thumb"></div>
+            </div>
+          </div>
+
+          <div class="menu-divider"></div>
+
+          <!-- ngrok Token with Subheading -->
+          <div id="ngrokToggleRow" class="menu-item-row">
+            <div class="theme-label-group">
+              <span class="theme-title">ngrok Token</span>
+              <span class="theme-mode-text">Server Connection Setup</span>
+            </div>
+            <span id="ngrokArrow" style="font-size: 8px; color: var(--text-sec);">▶</span>
+          </div>
+
+          <!-- Server Connection Panel -->
+          <div id="ngrokPanel" class="ngrok-panel">
+            <span class="ngrok-header-label">SERVER CONNECTION</span>
+            <input 
+              type="text" 
+              id="srijanUrl" 
+              class="ngrok-input" 
+              placeholder="wss://614c-103-169-236-163.ngrok-free.app/ws" 
+            />
+
+            <div class="ngrok-status-line">
+              <span id="urlSavedStatus" style="color: var(--accent-emerald); font-size: 8.5px;">URL saved</span>
+              <span id="srijanConnStatus" style="color: var(--accent-amber); font-size: 8.5px;">CLOSED — reconnecting...</span>
+            </div>
+
+            <div class="ngrok-btn-row">
+              <button id="srijanUrlElement" class="ngrok-btn">Save URL</button>
+              <button id="reconnectBtn" class="ngrok-btn">Reconnect</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </header>
+
+    <main class="content-area" id="contentArea">
+      <div class="terminal-thread" id="chatThread">
+        <div class="chat-msg agent">
+          <strong>Agent Ready.</strong> Enter instructions below to dispatch browser directives.
+        </div>
+      </div>
+
+      <section class="card" id="planSection" style="display: none;">
+        <div class="card-header">
+          <span class="gradient-tag">✦ AI BLUEPRINT</span>
+          <span id="taskCount" style="font-size: 9px; color: var(--text-sec);">0 Tasks</span>
+        </div>
+        <div class="task-title" id="goalTitle">Awaiting directive...</div>
+        <ul class="task-checklist" id="stepList"></ul>
+      </section>
+    </main>
+
+    <footer class="omnibar-footer">
+      <div class="omnibar-wrap">
+        <input type="text" id="promptInput" placeholder="Enter instructions or steer the agent..." />
+        <button class="send-pill" id="sendBtn" title="Send">↑</button>
+      </div>
+    </footer>
   </div>
 
-  <div id="messages">
-  </div>
-
-  <div class="composer">
-
-    <div class="input-container">
-
-      <textarea
-        id="prompt"
-        rows="1"
-        placeholder="Message your browser agent..."
-      ></textarea>
-
-      <button
-        id="send"
-        title="Send"
-      >
-        ↑
-      </button>
-
-    </div>
-
-    <div class="tools">
-
-      <button id="screenshot" class="tool-button">
-        Screenshot
-      </button>
-
-      <button id="demo" class="tool-button">
-        Demo: Google
-      </button>
-
-      <button id="debug-toggle" class="tool-button">
-        Debug
-      </button>
-
-    </div>
-
-    <div id="debug-panel" hidden>
-      <div class="debug-title">Debug modes</div>
-      <div class="debug-grid">
-        <button id="debug-health" class="tool-button">
-          Test local server
-        </button>
-        <button id="debug-context" class="tool-button">
-          Test prompt + screenshot
-        </button>
-        <button id="debug-ping" class="tool-button">
-          Ping native host
-        </button>
-        <button id="debug-action" class="tool-button">
-          Test DOM action
-        </button>
-      </div>
-
-      <div class="debug-title" style="margin-top:10px;">Srijan connection</div>
-      <input id="srijan-url" type="text" placeholder="wss://your-ngrok-domain.ngrok.app/ws" autocomplete="off" spellcheck="false" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:6px;font:inherit;font-size:11px;">
-      <div id="srijan-config-status" class="srijan-status">URL not configured</div>
-      <div id="srijan-connection-status" class="srijan-status" data-state="not_configured">Connection: NOT CONFIGURED</div>
-      <div class="debug-grid" style="margin-top:6px;">
-        <button id="srijan-save" class="tool-button">Save URL</button>
-        <button id="srijan-reconnect" class="tool-button">Reconnect</button>
-      </div>
-      <label class="debug-check">
-        <input id="debug-verbose" type="checkbox">
-        Verbose debug messages
-      </label>
-    </div>
-
-    <div id="status">
-      Ready
-    </div>
-
-  </div>
-
-  <script
-    type="module"
-    src="dist/popup.js"
-  ></script>
-
+  <script type="module" src="dist\popup.js"></script>
 </body>
 </html>

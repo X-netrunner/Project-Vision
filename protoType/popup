@@ -1,0 +1,201 @@
+document.documentElement.style.width = "360px";
+document.documentElement.style.height = "520px";
+document.body.style.width = "360px";
+document.body.style.height = "520px";
+
+document.addEventListener("DOMContentLoaded", () => {
+  const settingsBtn = document.getElementById("settingsBtn");
+  const settingsDropdown = document.getElementById("settingsDropdown");
+
+  const themeToggleRow = document.getElementById("themeToggleRow");
+  const themeSwitchTrack = document.getElementById("themeSwitchTrack");
+  const themeModeText = document.getElementById("themeModeText");
+
+  const ngrokToggleRow = document.getElementById("ngrokToggleRow");
+  const ngrokArrow = document.getElementById("ngrokArrow");
+  const ngrokPanel = document.getElementById("ngrokPanel");
+  const srijanUrl = document.getElementById("srijanUrl");
+  const srijanUrlElement = document.getElementById("srijanUrlElement");
+  const reconnectBtn = document.getElementById("reconnectBtn");
+  const urlSavedStatus = document.getElementById("urlSavedStatus");
+  const srijanConnStatus = document.getElementById("srijanConnStatus");
+
+  const statusDot = document.getElementById("statusDot");
+  const statusLabel = document.getElementById("statusLabel");
+  const pauseBtn = document.getElementById("pauseBtn");
+  const abortBtn = document.getElementById("abortBtn");
+  const contentArea = document.getElementById("contentArea");
+  const chatThread = document.getElementById("chatThread");
+  const planSection = document.getElementById("planSection");
+  const goalTitle = document.getElementById("goalTitle");
+  const stepList = document.getElementById("stepList");
+  const taskCount = document.getElementById("taskCount");
+  const promptInput = document.getElementById("promptInput");
+  const sendBtn = document.getElementById("sendBtn");
+
+  const storage = {
+    get: (key, cb) => {
+      if (typeof chrome !== "undefined" && chrome.storage?.local) {
+        chrome.storage.local.get([key], (res) => cb(res[key] || null));
+      } else {
+        cb(localStorage.getItem(key));
+      }
+    },
+    set: (key, val) => {
+      if (typeof chrome !== "undefined" && chrome.storage?.local) {
+        chrome.storage.local.set({ [key]: val });
+      } else {
+        localStorage.setItem(key, val);
+      }
+    }
+  };
+
+  settingsBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    settingsDropdown?.classList.toggle("active");
+  });
+
+  settingsDropdown?.addEventListener("click", (e) => {
+    e.stopPropagation();
+  });
+
+  document.addEventListener("click", () => {
+    settingsDropdown?.classList.remove("active");
+  });
+
+  function applyTheme(isLight) {
+    const themeName = isLight ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", themeName);
+
+    if (themeSwitchTrack) {
+      themeSwitchTrack.classList.toggle("on", isLight);
+    }
+    if (themeModeText) {
+      themeModeText.textContent = isLight ? "On (Light)" : "Off (Default Dark)";
+    }
+
+    storage.set("isLightMode", isLight);
+  }
+
+  themeToggleRow?.addEventListener("click", () => {
+    const isCurrentlyLight = document.documentElement.getAttribute("data-theme") === "light";
+    applyTheme(!isCurrentlyLight);
+  });
+
+  storage.get("isLightMode", (saved) => {
+    applyTheme(saved === true || saved === "true");
+  });
+
+  ngrokToggleRow?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isExpanded = ngrokPanel?.classList.toggle("expanded");
+    if (ngrokArrow) {
+      ngrokArrow.textContent = isExpanded ? "▼" : "▶";
+    }
+  });
+
+  storage.get("srijanWsUrl", (savedUrl) => {
+    if (savedUrl && srijanUrl) {
+      srijanUrl.value = savedUrl;
+    }
+  });
+
+  srijanUrlElement?.addEventListener("click", () => {
+    const val = srijanUrl?.value.trim() || srijanUrl?.getAttribute("placeholder") || "";
+    if (!val) return;
+
+    storage.set("srijanWsUrl", val);
+    if (urlSavedStatus) {
+      urlSavedStatus.textContent = "URL saved ✓";
+      setTimeout(() => {
+        urlSavedStatus.textContent = "URL saved";
+      }, 2000);
+    }
+
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ action: "UPDATE_SRIJAN_URL", url: val }).catch(() => {});
+    }
+  });
+
+  reconnectBtn?.addEventListener("click", () => {
+    if (srijanConnStatus) {
+      srijanConnStatus.textContent = "Connecting...";
+      srijanConnStatus.style.color = "var(--accent-cyan)";
+    }
+
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ action: "RECONNECT_SRIJAN" }).catch(() => {});
+    }
+
+    setTimeout(() => {
+      if (srijanConnStatus) {
+        srijanConnStatus.textContent = "CONNECTED";
+        srijanConnStatus.style.color = "var(--accent-emerald)";
+      }
+    }, 1200);
+  });
+
+  function appendMessage(text, sender = "user") {
+    if (!chatThread) return;
+    const bubble = document.createElement("div");
+    bubble.className = `chat-msg ${sender}`;
+    bubble.textContent = text;
+    chatThread.appendChild(bubble);
+    contentArea.scrollTop = contentArea.scrollHeight;
+  }
+
+  function dispatchMessage() {
+    const text = promptInput?.value.trim();
+    if (!text) return;
+
+    appendMessage(text, "user");
+    promptInput.value = "";
+
+    if (statusLabel) statusLabel.textContent = "PLANNING...";
+    if (statusDot) statusDot.className = "pulse-dot waiting";
+
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ action: "USER_PROMPT", prompt: text }).catch(() => {});
+    }
+
+    setTimeout(() => {
+      appendMessage(`Analyzing objective: "${text}"... Blueprint generated below.`, "agent");
+
+      if (planSection) planSection.style.display = "block";
+      if (goalTitle) goalTitle.textContent = `Goal: ${text}`;
+      if (taskCount) taskCount.textContent = "3 Tasks";
+      if (statusLabel) statusLabel.textContent = "RUNNING";
+      if (statusDot) statusDot.className = "pulse-dot";
+      if (pauseBtn) pauseBtn.disabled = false;
+      if (abortBtn) abortBtn.disabled = false;
+
+      if (stepList) {
+        stepList.innerHTML = `
+          <li class="task-item running"><span class="item-icon">●</span><span>Inspecting DOM tree & target elements</span></li>
+          <li class="task-item pending"><span class="item-icon">○</span><span>Synthesizing parameters and comparing state</span></li>
+          <li class="task-item pending"><span class="item-icon">○</span><span>Execute browser interactions</span></li>
+        `;
+      }
+
+      contentArea.scrollTop = contentArea.scrollHeight;
+    }, 450);
+  }
+
+  sendBtn?.addEventListener("click", dispatchMessage);
+  promptInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      dispatchMessage();
+    }
+  });
+
+  abortBtn?.addEventListener("click", () => {
+    if (statusLabel) statusLabel.textContent = "ABORTED";
+    if (pauseBtn) pauseBtn.disabled = true;
+    if (abortBtn) abortBtn.disabled = true;
+    appendMessage("Pipeline execution halted by user.", "agent");
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ action: "ABORT" }).catch(() => {});
+    }
+  });
+});
