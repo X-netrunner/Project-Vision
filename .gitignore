@@ -34,3 +34,6 @@ Server\[unnati&srijan\]/**/*.txt
 .DS_Store
 protoType/.DS_Store
 protoType/src/.DS_Store
+
+#log files
+protoType/varun/logs
