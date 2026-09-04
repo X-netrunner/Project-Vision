@@ -262,6 +262,8 @@ import logging
 import time
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+
+print("[PRE-FLIGHT] Loading AI pipelines (OCR, NLP, face detection) -- this can take up to a minute on first run...")
 from redact import redact_image
 from config import SERVER_HOST, SERVER_PORT, WS_ENDPOINT, MAX_PAYLOAD_BYTES, GC_COLLECT_INTERVAL
 

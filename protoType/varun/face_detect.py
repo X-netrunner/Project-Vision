@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 from typing import List, Tuple
 import cv2
 import numpy as np
@@ -16,6 +17,8 @@ from config import (
 if not os.path.exists(YUNET_MODEL_PATH):
     raise FileNotFoundError(f"Missing face model at: {YUNET_MODEL_PATH}")
 
+print("[PRE-FLIGHT] Loading face detection model (YuNet)...")
+_face_load_start = time.perf_counter()
 face_detector = cv2.FaceDetectorYN.create(
     model=YUNET_MODEL_PATH,
     config="",
@@ -24,6 +27,7 @@ face_detector = cv2.FaceDetectorYN.create(
     nms_threshold=FACE_NMS_THRESHOLD,
     top_k=FACE_TOP_K,
 )
+print(f"[PRE-FLIGHT] Face detection model loaded in {time.perf_counter() - _face_load_start:.2f}s")
 
 # cv2.FaceDetectorYN wraps a shared cv2.dnn.Net. setInputSize() + detect() is a
 # two-step, stateful call on that single global instance, so concurrent calls
