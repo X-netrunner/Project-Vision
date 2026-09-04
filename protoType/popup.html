@@ -66,7 +66,6 @@
 
     * { box-sizing: border-box; margin: 0; padding: 0; outline: none; }
 
-    /* Enhanced Custom Webkit Scrollbar */
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: var(--input-bg); border-radius: 10px; margin: 4px; }
     ::-webkit-scrollbar-thumb { 
@@ -162,9 +161,10 @@
     .settings-dropdown.active { display: block !important; }
 
     .menu-item-row { display: flex; align-items: center; justify-content: space-between; user-select: none; cursor: pointer; padding: 5px 0; }
+    .menu-item-row:hover .theme-title.danger { color: var(--accent-rose); }
     .menu-divider { height: 1px; background: var(--card-border); margin: 6px 0; }
     .theme-label-group { display: flex; flex-direction: column; gap: 1px; pointer-events: none; }
-    .theme-title { font-size: 11px; font-weight: 700; color: var(--text-pri); }
+    .theme-title { font-size: 11px; font-weight: 700; color: var(--text-pri); transition: color 0.15s ease; }
     .theme-mode-text { font-size: 9px; color: var(--text-sec); }
 
     .switch-track { width: 34px; height: 18px; background: rgba(255, 255, 255, 0.16); border-radius: 999px; position: relative; border: 1px solid var(--card-border); pointer-events: none; }
@@ -176,14 +176,6 @@
       display: none; flex-direction: column; gap: 6px; margin-top: 6px; padding: 8px; background: var(--input-bg); border-radius: 6px; border: 1px solid var(--card-border);
     }
     .controls-panel.expanded, .ngrok-panel.expanded { display: flex !important; }
-
-    .controls-grid { display: flex; gap: 5px; flex-wrap: wrap; }
-    .control-btn {
-      flex: 1; font-size: 9.5px; font-weight: 700; padding: 6px 4px; border-radius: 5px; border: 1px solid var(--card-border); background: var(--card-surface); color: var(--text-pri); cursor: pointer;
-    }
-    .control-btn:hover { border-color: var(--accent-violet); background: rgba(139, 92, 246, 0.15); }
-    .control-btn.danger { color: var(--accent-rose); border-color: rgba(244, 63, 94, 0.3); }
-    .control-btn.danger:hover { background: rgba(244, 63, 94, 0.15); border-color: var(--accent-rose); }
 
     .ngrok-header-label { font-size: 9px; font-weight: 800; letter-spacing: 0.06em; color: var(--accent-cyan); }
     .ngrok-input {
@@ -329,6 +321,19 @@
               <button id="reconnectBtn" class="ngrok-btn">Reconnect</button>
             </div>
           </div>
+          
+          <div class="menu-divider"></div>
+
+          <div id="clearChatBtn" class="menu-item-row" style="opacity: 0.85;">
+            <div class="theme-label-group">
+              <span class="theme-title danger" style="color: var(--accent-rose);">Clear Chat</span>
+              <span class="theme-mode-text">Erase conversation history</span>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--accent-rose)">
+              <path d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z"/>
+            </svg>
+          </div>
+
         </div>
       </div>
     </header>
@@ -338,7 +343,7 @@
         <div class="message-row system">
           <div class="message-bubble">
             <div class="message-label">System</div>
-            <div class="message-text">Agent Ready. Enter instructions below to dispatch browser directives.</div>
+            <div class="message-text">Ready to go when you are!</div>
           </div>
         </div>
       </div>
