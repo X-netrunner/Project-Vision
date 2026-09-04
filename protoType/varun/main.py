@@ -1,13 +1,51 @@
 import os
 import sys
-import subprocess
-import importlib.util
-import urllib.request
+import datetime
+
+# ==============================================================================
+# LOGGING & STREAMS SETUP (Terminal + File Mirroring)
+# ==============================================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOGS_DIR, exist_ok=True)
+
+session_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+LOG_FILE_PATH = os.path.join(LOGS_DIR, f"redactor_{session_timestamp}.log")
+
+class TeeLogger:
+    """Mirrors console writes to both terminal output and a log file."""
+    def __init__(self, stream, file_path):
+        self.stream = stream
+        self.file = open(file_path, "a", encoding="utf-8", buffering=1)
+
+    def write(self, message):
+        self.stream.write(message)
+        self.file.write(message)
+        self.flush()
+
+    def flush(self):
+        self.stream.flush()
+        self.file.flush()
+
+    def isatty(self):
+        return hasattr(self.stream, "isatty") and self.stream.isatty()
+
+    def fileno(self):
+        return self.stream.fileno()
+
+# Redirect stdout and stderr immediately
+sys.stdout = TeeLogger(sys.stdout, LOG_FILE_PATH)
+sys.stderr = TeeLogger(sys.stderr, LOG_FILE_PATH)
+
+print(f"[INIT] Session log initialized: {LOG_FILE_PATH}")
 
 # ==============================================================================
 # PRE-FLIGHT ASSET & DEPENDENCY RESOLUTION
 # ==============================================================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+import subprocess
+import importlib.util
+import urllib.request
+
 REQUIREMENTS_PATH = os.path.join(BASE_DIR, "requirements.txt")
 YUNET_PATH = os.path.join(BASE_DIR, "face_detection_yunet_2023mar.onnx")
 YUNET_DOWNLOAD_URL = (
@@ -50,7 +88,6 @@ def ensure_dependencies():
             if not line or line.startswith("#"):
                 continue
 
-            # Check special wheel distributions (e.g. en-core-web-sm)
             if "@" in line:
                 pkg_name = line.split("@")[0].strip().replace("-", "_")
                 if importlib.util.find_spec(pkg_name) is None:
@@ -102,7 +139,12 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from redact import redact_image
 from config import SERVER_HOST, SERVER_PORT, WS_ENDPOINT, MAX_PAYLOAD_BYTES
 
-logging.basicConfig(level=logging.INFO)
+# Configure Python logging to write directly into the mirrored stdout stream
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger("VarunRedactor")
 
 app = FastAPI(title="Varun Face & PII Redactor")
@@ -178,5 +220,6 @@ if __name__ == "__main__":
         app,
         host=SERVER_HOST,
         port=SERVER_PORT,
-        ws_max_size=MAX_PAYLOAD_BYTES
+        ws_max_size=MAX_PAYLOAD_BYTES,
+        log_config=None  # Preserves custom logger handlers and stdout mirroring
     )
