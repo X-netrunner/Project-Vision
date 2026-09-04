@@ -66,6 +66,18 @@
 
     * { box-sizing: border-box; margin: 0; padding: 0; outline: none; }
 
+    /* Enhanced Custom Webkit Scrollbar */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--input-bg); border-radius: 10px; margin: 4px; }
+    ::-webkit-scrollbar-thumb { 
+      background: linear-gradient(180deg, var(--accent-indigo) 0%, var(--accent-cyan) 100%); 
+      border-radius: 10px; 
+      border: 1px solid var(--card-border);
+    }
+    ::-webkit-scrollbar-thumb:hover { 
+      background: linear-gradient(180deg, var(--accent-violet) 0%, var(--accent-emerald) 100%); 
+    }
+
     html, body {
       width: 360px !important; height: 520px !important;
       min-width: 360px !important; max-width: 360px !important;
@@ -91,26 +103,48 @@
     }
 
     .hud-bar {
-      height: 48px; min-height: 48px; padding: 0 12px; display: flex; justify-content: space-between; align-items: center;
+      min-height: 58px; height: auto; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center;
       border-bottom: 1px solid var(--card-border); background: var(--card-surface); backdrop-filter: blur(12px); z-index: 2;
     }
 
-    .brand-cluster { display: flex; align-items: center; gap: 7px; }
+    .brand-cluster { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+    
+    .brand-row { display: flex; align-items: center; gap: 7px; }
+
     .brand-title {
-      font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase;
+      font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase;
       background: linear-gradient(135deg, #FFFFFF 20%, var(--accent-cyan) 60%, var(--accent-violet) 100%);
       -webkit-background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.4)); user-select: none;
+      white-space: nowrap;
     }
-    [data-theme="light"] .brand-title { background: linear-gradient(135deg, #0F172A 20%, var(--accent-violet) 70%, var(--accent-cyan) 100%); filter: none; }
+    
+    [data-theme="light"] .brand-title { 
+      background: linear-gradient(135deg, #0F172A 20%, var(--accent-violet) 70%, var(--accent-cyan) 100%);
+      -webkit-background-clip: text; 
+      -webkit-text-fill-color: transparent; 
+      filter: none; 
+    }
 
-    .pixel-eye { display: block; width: 15px; height: 15px; filter: drop-shadow(0 0 4px rgba(6, 182, 212, 0.5)); }
+    .pixel-eye { display: block; width: 16px; height: 16px; filter: drop-shadow(0 0 4px rgba(6, 182, 212, 0.5)); flex-shrink: 0; }
 
     .status-chip {
-      display: flex; align-items: center; gap: 4px; font-size: 8.5px; font-weight: 800; color: var(--accent-emerald);
-      background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); padding: 1.5px 6px; border-radius: 999px;
-      max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      display: flex; align-items: center; gap: 5px; font-size: 9.5px; font-weight: 800; color: var(--accent-emerald);
+      background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); padding: 3px 8px; border-radius: 8px;
+      max-width: 270px; word-break: break-word; line-height: 1.3;
     }
     .pulse-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent-emerald); box-shadow: 0 0 5px var(--accent-emerald); flex-shrink: 0; }
+    
+    .status-chip:has(.pulse-dot.error) {
+      color: var(--accent-rose);
+      background: rgba(244, 63, 94, 0.12);
+      border-color: rgba(244, 63, 94, 0.3);
+    }
+    .status-chip:has(.pulse-dot.waiting) {
+      color: var(--accent-amber);
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.3);
+    }
+    
     .pulse-dot.waiting { background: var(--accent-amber); box-shadow: 0 0 5px var(--accent-amber); }
     .pulse-dot.error { background: var(--accent-rose); box-shadow: 0 0 5px var(--accent-rose); }
 
@@ -122,7 +156,7 @@
     .btn-icon:hover { color: var(--text-pri); border-color: var(--accent-violet); }
 
     .settings-dropdown {
-      display: none; position: absolute; top: 34px; right: 0; background: var(--menu-bg); border: 1px solid var(--card-border);
+      display: none; position: absolute; top: 36px; right: 0; background: var(--menu-bg); border: 1px solid var(--card-border);
       border-radius: 10px; padding: 8px 10px; width: 250px; max-height: 400px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55); z-index: 999; backdrop-filter: blur(14px);
     }
     .settings-dropdown.active { display: block !important; }
@@ -164,7 +198,6 @@
     .content-area { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 12px; display: flex; flex-direction: column; gap: 8px; z-index: 1; scroll-behavior: smooth; }
     .terminal-thread { display: flex; flex-direction: column; gap: 10px; width: 100%; }
 
-    /* Clean Chat Bubble Styles (JSON & Screenshots) */
     .message-row { display: flex; width: 100%; }
     .message-row.user { justify-content: flex-end; }
     .message-row.server, .message-row.system { justify-content: flex-start; }
@@ -179,40 +212,53 @@
     .message-row.system .message-bubble { font-size: 10.5px; }
 
     .message-label {
-      margin-bottom: 5px; font-size: 9px; font-weight: 800; color: var(--accent-cyan); text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 5px; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;
     }
+    
+    .message-row.server .message-label { color: var(--accent-indigo); }
     .message-row.system .message-label { color: var(--accent-violet); }
+    
     .message-text { white-space: pre-wrap; color: var(--text-pri); }
 
-    /* Screenshot & Interactive JSON Viewer */
     .screenshot {
       display: block; width: 100%; max-height: 240px; object-fit: contain; margin-top: 8px; border-radius: 6px; border: 1px solid var(--card-border); background: #000;
     }
 
     .json-details {
-      margin-top: 8px; border: 1px solid var(--card-border); border-radius: 6px; background: rgba(0, 0, 0, 0.25); overflow: hidden;
+      margin-top: 8px; border: 1px solid var(--card-border); border-radius: 6px; background: var(--input-bg); overflow: hidden;
     }
+    
     .json-details summary {
-      cursor: pointer; color: var(--accent-cyan); font-size: 9.5px; font-weight: 700; padding: 6px 8px; user-select: none; background: rgba(255, 255, 255, 0.02); transition: color 0.15s ease;
+      cursor: pointer; color: var(--accent-cyan); font-size: 9.5px; font-weight: 700; padding: 6px 8px; user-select: none; background: transparent; transition: background 0.15s ease, color 0.15s ease;
     }
-    .json-details summary:hover { color: var(--accent-violet); }
+    .json-details summary:hover { color: var(--accent-violet); background: var(--card-surface); }
     .json-details pre {
       padding: 8px; font-family: "Cascadia Code", Consolas, monospace; font-size: 9px; overflow-x: auto; color: var(--text-sec);
-      border-top: 1px solid var(--card-border); white-space: pre-wrap; word-break: break-all; margin: 0; background: rgba(0, 0, 0, 0.5);
+      border-top: 1px solid var(--card-border); white-space: pre-wrap; word-break: break-all; margin: 0; background: var(--bg-canvas);
     }
 
-    .omnibar-footer { padding: 10px 12px; background: var(--card-surface); border-top: 1px solid var(--card-border); backdrop-filter: blur(12px); z-index: 2; }
-    .omnibar-wrap { display: flex; align-items: flex-end; background: var(--input-bg); border: 1px solid rgba(139, 92, 246, 0.4); border-radius: 14px; padding: 8px 10px; box-shadow: 0 0 14px rgba(139, 92, 246, 0.12); gap: 8px; }
+    .omnibar-footer { padding: 6px 12px; background: var(--card-surface); border-top: 1px solid var(--card-border); backdrop-filter: blur(12px); z-index: 2; }
+    
+    .omnibar-wrap { 
+      display: flex; 
+      align-items: center; 
+      background: var(--input-bg); 
+      border: 1px solid rgba(139, 92, 246, 0.4); 
+      border-radius: 14px; 
+      padding: 6px 10px; 
+      box-shadow: 0 0 14px rgba(139, 92, 246, 0.12); 
+      gap: 8px; 
+    }
     
     .omnibar-wrap textarea {
-      flex: 1; background: transparent; border: none; color: var(--text-pri); outline: none; font-size: 12px; resize: none; font-family: inherit; line-height: 1.4; min-height: 18px; max-height: 80px; padding: 2px 0;
+      flex: 1; background: transparent; border: none; color: var(--text-pri); outline: none; font-size: 13.5px; resize: none; font-family: inherit; line-height: 1.4; min-height: 18px; max-height: 80px; padding: 0; margin: auto 0;
     }
     .omnibar-wrap textarea::placeholder { color: var(--text-sec); }
 
     .send-pill {
       background: linear-gradient(135deg, #A855F7 0%, #06B6D4 100%) !important; border: 1.5px solid rgba(255, 255, 255, 0.4) !important; color: #FFFFFF !important;
-      border-radius: 10px !important; width: 34px !important; height: 34px !important; min-width: 34px !important; cursor: pointer; font-weight: 900 !important;
-      display: flex; align-items: center; justify-content: center; font-size: 18px !important; box-shadow: 0 0 14px rgba(168, 85, 247, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4) !important; transition: transform 0.12s ease, box-shadow 0.12s ease;
+      border-radius: 10px !important; width: 30px !important; height: 30px !important; min-width: 30px !important; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; box-shadow: 0 0 14px rgba(168, 85, 247, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4) !important; transition: transform 0.12s ease, box-shadow 0.12s ease;
     }
     .send-pill:hover { transform: scale(1.06); box-shadow: 0 0 18px rgba(6, 182, 212, 0.8), 0 3px 8px rgba(0, 0, 0, 0.5) !important; }
     .send-pill:active { transform: scale(0.94); }
@@ -224,19 +270,21 @@
   <div class="agent-shell">
     <header class="hud-bar">
       <div class="brand-cluster">
-        <span class="brand-title">PROJECT VISION</span>
-        <svg class="pixel-eye" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="5" y="3" width="6" height="1.5" fill="var(--accent-cyan)"/>
-          <rect x="3" y="4.5" width="2" height="1.5" fill="var(--accent-cyan)"/>
-          <rect x="11" y="4.5" width="2" height="1.5" fill="var(--accent-cyan)"/>
-          <rect x="1" y="6" width="2" height="4" fill="var(--accent-cyan)"/>
-          <rect x="13" y="6" width="2" height="4" fill="var(--accent-cyan)"/>
-          <rect x="3" y="10" width="2" height="1.5" fill="var(--accent-cyan)"/>
-          <rect x="11" y="10" width="2" height="1.5" fill="var(--accent-cyan)"/>
-          <rect x="5" y="11.5" width="6" height="1.5" fill="var(--accent-cyan)"/>
-          <rect x="6" y="6" width="4" height="4" fill="var(--accent-violet)"/>
-          <rect x="6" y="6" width="1.5" height="1.5" fill="#FFFFFF"/>
-        </svg>
+        <div class="brand-row">
+          <span class="brand-title">PROJECT VISION</span>
+          <svg class="pixel-eye" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="5" y="3" width="6" height="1.5" fill="var(--accent-cyan)"/>
+            <rect x="3" y="4.5" width="2" height="1.5" fill="var(--accent-cyan)"/>
+            <rect x="11" y="4.5" width="2" height="1.5" fill="var(--accent-cyan)"/>
+            <rect x="1" y="6" width="2" height="4" fill="var(--accent-cyan)"/>
+            <rect x="13" y="6" width="2" height="4" fill="var(--accent-cyan)"/>
+            <rect x="3" y="10" width="2" height="1.5" fill="var(--accent-cyan)"/>
+            <rect x="11" y="10" width="2" height="1.5" fill="var(--accent-cyan)"/>
+            <rect x="5" y="11.5" width="6" height="1.5" fill="var(--accent-cyan)"/>
+            <rect x="6" y="6" width="4" height="4" fill="var(--accent-violet)"/>
+            <rect x="6" y="6" width="1.5" height="1.5" fill="#FFFFFF"/>
+          </svg>
+        </div>
         <div class="status-chip">
           <span class="pulse-dot" id="statusDot"></span>
           <span id="statusLabel">READY</span>
@@ -244,7 +292,11 @@
       </div>
 
       <div class="hud-actions">
-        <button id="settingsBtn" class="btn-icon" title="Settings">⚙</button>
+        <button id="settingsBtn" class="btn-icon" title="Settings">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.43-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+          </svg>
+        </button>
 
         <div id="settingsDropdown" class="settings-dropdown">
           <div id="themeToggleRow" class="menu-item-row">
@@ -253,23 +305,6 @@
               <span class="theme-mode-text" id="themeModeText">Off (Default Dark)</span>
             </div>
             <div class="switch-track" id="themeSwitchTrack"><div class="switch-thumb"></div></div>
-          </div>
-
-          <div class="menu-divider"></div>
-
-          <div id="controlsToggleRow" class="menu-item-row">
-            <div class="theme-label-group">
-              <span class="theme-title">Controls</span>
-              <span class="theme-mode-text">Pause, reroute, clear</span>
-            </div>
-            <span id="controlsArrow" style="font-size: 8px; color: var(--text-sec); pointer-events: none;">▶</span>
-          </div>
-
-          <div id="controlsPanel" class="controls-panel">
-            <span class="ngrok-header-label">SESSION CONTROLS</span>
-            <div class="controls-grid">
-              <button id="clearChatBtn" class="control-btn danger" style="flex: 1 1 100%;">🗑 Clear Chat Memory</button>
-            </div>
           </div>
 
           <div class="menu-divider"></div>
@@ -312,7 +347,11 @@
     <footer class="omnibar-footer">
       <div class="omnibar-wrap">
         <textarea id="promptInput" rows="1" placeholder="Message your browser agent..."></textarea>
-        <button class="send-pill" id="sendBtn" title="Send">↑</button>
+        <button class="send-pill" id="sendBtn" title="Send">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M13,20h-2V7.83l-5.5,5.5l-1.41-1.41L12,4.08l7.92,7.83l-1.41,1.41L13,7.83V20z"/>
+          </svg>
+        </button>
       </div>
     </footer>
   </div>
