@@ -7,12 +7,59 @@ from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
 import torch
 
 MODEL_ID = "Qwen/Qwen2-VL-2B-Instruct"
-device = "cuda" if torch.cuda.is_available() else "cpu"
 
-model = Qwen2VLForConditionalGeneration.from_pretrained(
-    MODEL_ID, torch_dtype=torch.float16 if device == "cuda" else torch.float32, device_map="auto"
-)
+if torch.cuda.is_available():
+    free_bytes = torch.cuda.mem_get_info()[0]
+    free_gb = free_bytes / 1e9
+    total_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+    print(f"[*] GPU detected: {torch.cuda.get_device_name(0)} (Total: {total_gb:.1f} GB, Free: {free_gb:.1f} GB)")
+    if free_gb < 4.0:
+        print(f"[*] Free VRAM ({free_gb:.1f} GB) is under 4GB (8B planner model is using GPU). Loading VLM on CPU...")
+        device = "cpu"
+        dtype = torch.float32
+    else:
+        device = "cuda:0"
+        dtype = torch.float16
+else:
+    device = "cpu"
+    dtype = torch.float32
+    print("[!] No GPU detected, using CPU")
+
+try:
+    model = Qwen2VLForConditionalGeneration.from_pretrained(
+        MODEL_ID,
+        torch_dtype=dtype,
+        device_map=device,
+        low_cpu_mem_usage=True,
+        offload_buffers=True,
+    )
+except (torch.OutOfMemoryError, RuntimeError) as e:
+    print(f"[!] GPU memory error ({e}). Falling back to CPU for VLM...")
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    device = "cpu"
+    dtype = torch.float32
+    model = Qwen2VLForConditionalGeneration.from_pretrained(
+        MODEL_ID,
+        torch_dtype=dtype,
+        device_map=device,
+        low_cpu_mem_usage=True,
+        offload_buffers=True,
+    )
+
 processor = AutoProcessor.from_pretrained(MODEL_ID)
+
+print(f"[*] Model loaded on: {next(model.parameters()).device} ({next(model.parameters()).dtype})")
+
+# Contextual prompt for privacy redaction handling
+REDACTION_SYSTEM_INSTRUCTION = (
+    "PRIVACY REDACTION NOTICE: The provided screenshot contains privacy redactions where all human faces, "
+    "avatars, sensitive text, emails, phone numbers, delivery addresses, and PII are intentionally masked "
+    "with blur or solid black/grey bounding boxes. These redactions are completely normal and expected. "
+    "DO NOT PANIC, fail, or abort because of these redactions. Do NOT attempt to target or click inside "
+    "redacted boxes. Focus exclusively on unredacted standard UI elements (e.g., 'Add to Cart' button, "
+    "search bar, product listings, navigation buttons, and menus)."
+)
 
 
 def decode_base64_image(base64_string: str) -> Image.Image:
@@ -27,9 +74,7 @@ def decode_base64_image(base64_string: str) -> Image.Image:
     base64_string = "".join(base64_string.split())
 
     missing_padding = len(base64_string) % 4
-    if missing_padding == 1:
-        raise ValueError(f"[!] Invalid Base64 payload length ({len(base64_string)} chars).")
-    elif missing_padding == 2:
+    if missing_padding == 2:
         base64_string += "=="
     elif missing_padding == 3:
         base64_string += "="
@@ -38,66 +83,16 @@ def decode_base64_image(base64_string: str) -> Image.Image:
     return Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
 
-PAIR_RE = r"\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\)"
-
-
-def parse_box_center(output_text: str) -> tuple | None:
-    """Extract the center of a bounding box from the raw model output.
-
-    Qwen2-VL is trained to normalize bounding boxes within [0, 1000) and render
-    them as "<|box_start|>(X1,Y1),(X2,Y2)<|box_end|>", where X indexes the
-    horizontal (width) axis and Y the vertical (height) axis. In practice the
-    small 2B model frequently ignores the special tokens and just writes the
-    two corner pairs as free text, e.g.
-        "approximately (380, 380) to (620, 520)"
-    so we also accept the first two "(x,y)" pairs found anywhere in the reply,
-    as well as a bare [x1,y1,x2,y2] list. Returns (center_x_norm, center_y_norm)
-    in [0,1000) space, or None if no box could be parsed.
-    """
-    if not output_text:
-        return None
-
-    # Preferred: Qwen2-VL "<|box_start|>(X1,Y1),(X2,Y2)<|box_end|>" format.
-    m = re.search(
-        r"<\|box_start\|>\s*\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\)\s*,\s*\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\)\s*<\|box_end\|>",
-        output_text,
-        re.IGNORECASE,
-    )
-    if m:
-        x1, y1, x2, y2 = map(float, m.groups())
-        return (x1 + x2) / 2.0, (y1 + y2) / 2.0
-
-    # Fallback: the first two "(X,Y)" pairs anywhere in the reply, regardless
-    # of the words separating them ("and", "to", "->", ",", etc.).
-    pairs = re.findall(PAIR_RE, output_text)
-    if len(pairs) == 1:
-        # Only a single "(X,Y)" point was returned; treat it as the center.
-        x1, y1 = pairs[0]
-        return float(x1), float(y1)
-    if len(pairs) >= 2:
-        (x1, y1), (x2, y2) = pairs[:2]
-        return (float(x1) + float(x2)) / 2.0, (float(y1) + float(y2)) / 2.0
-
-    # Fallback: bare [x1,y1,x2,y2] list (already ordered X1,Y1,X2,Y2).
-    m = re.search(r"\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]", output_text)
-    if m:
-        x1, y1, x2, y2 = map(float, m.groups())
-        return (x1 + x2) / 2.0, (y1 + y2) / 2.0
-
-    return None
-
-
 def predict_action(
     base64_image: str,
     current_step: str,
     step_index: int = 0,
     is_last_step: bool = False,
-    device_pixel_ratio: float = 1.0,
 ) -> dict:
     clean_text = current_step.strip()
     action_type = "click"
 
-    # Case-insensitive prefix detection
+    # Case-insensitive tag extraction
     prefixes = ["click", "type", "navigate", "press", "scroll", "search", "open_tab", "close_tab", "switch_tab"]
     for prefix in prefixes:
         if clean_text.lower().startswith(prefix + ":"):
@@ -105,14 +100,15 @@ def predict_action(
             clean_text = clean_text[len(prefix) + 1:].strip()
             break
 
-    # Handle non-visual actions directly matching ActionPayload interface
+    # Non-visual actions
     if action_type in ["navigate", "open_tab"]:
         target_url = clean_text if clean_text.startswith("http") else f"https://{clean_text}"
         return {
             "action": action_type,
             "url": target_url,
             "step_index": step_index,
-            "is_last_step": is_last_step
+            "is_last_step": is_last_step,
+            "found": True
         }
 
     elif action_type == "search":
@@ -120,7 +116,8 @@ def predict_action(
             "action": action_type,
             "query": clean_text,
             "step_index": step_index,
-            "is_last_step": is_last_step
+            "is_last_step": is_last_step,
+            "found": True
         }
 
     elif action_type == "press":
@@ -128,7 +125,8 @@ def predict_action(
             "action": action_type,
             "key": clean_text if clean_text else "Enter",
             "step_index": step_index,
-            "is_last_step": is_last_step
+            "is_last_step": is_last_step,
+            "found": True
         }
 
     elif action_type == "scroll":
@@ -138,33 +136,41 @@ def predict_action(
             "direction": direction,
             "amount": 500,
             "step_index": step_index,
-            "is_last_step": is_last_step
+            "is_last_step": is_last_step,
+            "found": True
         }
 
     elif action_type in ["close_tab", "switch_tab"]:
         return {
             "action": action_type,
             "step_index": step_index,
-            "is_last_step": is_last_step
+            "is_last_step": is_last_step,
+            "found": True
         }
 
-    # Visual actions requiring screen coordinate predictions (CLICK / TYPE)
+    # Visual Actions (CLICK / TYPE)
     try:
         img = decode_base64_image(base64_image)
         width, height = img.size
     except Exception as err:
-        print(f"[!] Warning decoding screenshot: {err}. Defaulting to 1920x1080 canvas.")
+        print(f"[!] Screenshot decoding error: {err}. Using default fallback size.")
         img = Image.new("RGB", (1920, 1080))
         width, height = 1920, 1080
 
-    prompt = (
-        f"Find '{clean_text}' in the screenshot. "
-        "Return ONLY the bounding box of its center on the screen "
-        "as (x1,y1),(x2,y2) where coordinates are normalized from 0 to 1000 "
-        "across the full image width and height. "
-        "The first number of each pair is the horizontal (x) coordinate, the "
-        "second is the vertical (y) coordinate."
-    )
+    # Build clear visual prompt with common ecommerce and Flipkart hints
+    lower_target = clean_text.lower()
+    if "add to cart" in lower_target or "cart" in lower_target:
+        target_desc = "the 'Add to Cart' or 'ADD TO CART' button (or shopping cart action button)"
+    elif "search" in lower_target and ("bar" in lower_target or "input" in lower_target or "box" in lower_target):
+        target_desc = "the search bar or search input field"
+    elif "product" in lower_target and ("first" in lower_target or "result" in lower_target or "item" in lower_target):
+        target_desc = "the first product item or title card in the search results"
+    elif "close" in lower_target or "cross" in lower_target or "cancel" in lower_target:
+        target_desc = "the close (X) button or modal dismiss button"
+    else:
+        target_desc = f"'{clean_text}'"
+
+    prompt = f"{REDACTION_SYSTEM_INSTRUCTION}\nLocate the bounding box coordinates [ymin, xmin, ymax, xmax] of {target_desc} on the screen."
 
     messages = [
         {
@@ -191,33 +197,17 @@ def predict_action(
         generated_ids, skip_special_tokens=True
     )[0]
 
-    print(f"[VLM] raw output for '{clean_text}': {output_text!r}")
-
     target_x, target_y = width // 2, height // 2
+    found = False
 
-    box_center = parse_box_center(output_text)
-    if box_center:
-        center_x_norm, center_y_norm = box_center
-        # Qwen2-VL normalizes to [0,1000) over the image it actually saw; the
-        # image is resized per-axis preserving aspect ratio, so mapping straight
-        # to the original screenshot dimensions is exact on each axis.
-        target_x = int((center_x_norm / 1000.0) * width)
-        target_y = int((center_y_norm / 1000.0) * height)
+    box_match = re.search(r"\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]", output_text)
+    if box_match:
+        ymin, xmin, ymax, xmax = map(int, box_match.groups())
+        target_x = int(((xmin + xmax) / 2 / 1000) * width)
+        target_y = int(((ymin + ymax) / 2 / 1000) * height)
+        found = True
     else:
-        print(f"[VLM] no parseable box in output for '{clean_text}'; falling back to center")
-
-    # The screenshot the model sees is captured in device pixels, but the
-    # content script clicks using document.elementFromPoint(x, y), which expects
-    # CSS/viewport pixels. Divide by the device pixel ratio to translate.
-    dpr = float(device_pixel_ratio) if device_pixel_ratio else 1.0
-    if dpr > 0:
-        target_x = int(target_x / dpr)
-        target_y = int(target_y / dpr)
-
-    # Never send coordinates outside the visible area.
-    target_x = max(0, min(target_x, width - 1))
-    target_y = max(0, min(target_y, height - 1))
-    print(f"[VLM] '{clean_text}' -> click ({target_x}, {target_y})  [img {width}x{height}, dpr {dpr}]")
+        print(f"[!] Target '{clean_text}' bounding box not parsed from VLM output: {output_text[:100]}")
 
     action_payload = {
         "action": action_type,
@@ -225,6 +215,8 @@ def predict_action(
         "y": target_y,
         "step_index": step_index,
         "is_last_step": is_last_step,
+        "found": found,
+        "target": clean_text
     }
 
     if action_type == "type":

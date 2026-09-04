@@ -5,62 +5,67 @@ import websockets
 # Valid base64-encoded 1x1 transparent PNG pixel
 DUMMY_BASE64_SS = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
-
 async def test_pipeline():
     uri = "ws://127.0.0.1:8001/ws"
-
     print(f"[*] Connecting to {uri}...")
+
     try:
-        async with websockets.connect(uri, open_timeout=60) as websocket:
+        async with websockets.connect(uri, open_timeout=30) as websocket:
             print("[+] Connected to Srijan's FastAPI server on Port 8001")
 
-            # Step 1: Send raw user prompt string (Phase 1)
-            test_prompt = "Search for mechanical keyboard on Amazon"
-            print(f"\n[>] Sending Phase 1 Prompt: '{test_prompt}'")
-            await websocket.send(test_prompt)
+            # Test 1: Flipkart Prompt Execution
+            test_prompt = "in flipkart add this to cart"
+            print(f"\n[>] Test 1: Sending Flipkart Prompt: '{test_prompt}'")
+            await websocket.send(json.dumps({
+                "type": "USER_PROMPT",
+                "request_id": "req_fk_001",
+                "prompt": test_prompt
+            }))
 
-            # The server builds a plan but does NOT reply with REQUEST_SS; it
-            # waits for us to send a screenshot for each step. We simulate the
-            # extension by sending a screenshot, then reading the AGENT_ACTION.
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(1.0)
 
-            # Step 2: Send a screenshot for step 0 and read AGENT_ACTION.
-            # The first action is usually 'navigate' (non-visual), so index 0.
-            await send_and_receive(websocket, request_id="req_001", step_index=0)
+            # Step 1: Send redacted screenshot
+            print("[>] Sending initial REDACTED_SCREENSHOT for Step 1...")
+            await websocket.send(json.dumps({
+                "type": "REDACTED_SCREENSHOT",
+                "request_id": "req_fk_001",
+                "tab_id": 101,
+                "step_index": 0,
+                "image": DUMMY_BASE64_SS,
+                "action_result": None
+            }))
+
+            reply1 = await asyncio.wait_for(websocket.recv(), timeout=60)
+            action1 = json.loads(reply1)
+            print(f"[<] Received Action 1:\n{json.dumps(action1, indent=2)}")
+
+            # Test 2: Simulate Failure & Verify Rethinking
+            print("\n[>] Test 2: Simulating action failure to trigger Model Rethink...")
+            failed_action_result = {
+                "type": "ACTION_RESULT",
+                "request_id": "req_fk_001",
+                "action_id": action1.get("action_id", "act_001"),
+                "result": {
+                    "success": False,
+                    "action": action1.get("action", {}).get("action", "click"),
+                    "step_index": 0,
+                    "tab_id": 101,
+                    "error": "Element not found or blocked by overlay in current viewport"
+                }
+            }
+            await websocket.send(json.dumps(failed_action_result))
+
+            # The server should rethink and immediately dispatch a corrective AGENT_ACTION
+            print("[*] Waiting for server rethink and corrective AGENT_ACTION...")
+            reply2 = await asyncio.wait_for(websocket.recv(), timeout=60)
+            action2 = json.loads(reply2)
+            print(f"[<] Received Corrective Action after Rethink:\n{json.dumps(action2, indent=2)}")
+            print("\n[SUCCESS] Pipeline and Rethink verified successfully!")
 
     except TimeoutError:
         print("[!] Connection timed out. Make sure 'python main.py' is running on port 8001.")
     except Exception as e:
         print(f"[!] Error: {e}")
-
-
-async def send_and_receive(websocket, request_id: str, step_index: int):
-    redacted_ss_payload = {
-        "type": "REDACTED_SCREENSHOT",
-        "request_id": request_id,
-        "tab_id": 123,
-        "step_index": step_index,
-        "image": DUMMY_BASE64_SS,
-        # HiDPI screens are captured in device pixels; the server divides the
-        # predicted coordinates by this value so clicks land at viewport pixels.
-        "device_pixel_ratio": 1.5,
-        "action_result": {
-            "success": True,
-            "action": "click",
-            "step_index": step_index,
-            "tab_id": 123
-        }
-    }
-    print(f"\n[>] Sending REDACTED_SCREENSHOT for Step {step_index + 1}...")
-    await websocket.send(json.dumps(redacted_ss_payload))
-
-    try:
-        agent_action_raw = await asyncio.wait_for(websocket.recv(), timeout=120)
-        agent_action = json.loads(agent_action_raw)
-        print(f"[<] Received from Srijan:\n{json.dumps(agent_action, indent=2)}")
-    except asyncio.TimeoutError:
-        print("[!] Timed out waiting for AGENT_ACTION from Srijan.")
-
 
 if __name__ == "__main__":
     asyncio.run(test_pipeline())

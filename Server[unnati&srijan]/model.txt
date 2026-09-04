@@ -7,14 +7,18 @@ for a 3b model :
 	[*] Testing Planner LLM...
 	[*] Generate Plan ['Go to a popular e-commerce website like Amazon or Newegg', "Search for '1TB SSD' in the search bar", 'Filter results to show only products from 2018 to 2026', 'Sort the results by date to see the price history', 'Note down the price history for 1TB SSD']
 
-for a 8b model :
-	==> Give a prompt :Give a prompt :research about the ps4 controller and tell me its working
+for a 8b model (qwen3:8b) :
+	==> Give a prompt :in flipkart add this to cart
 	[*] Testing Planner LLM...
-	[*] Generate Plan ['Open a web browser and navigate to a search engine (e.g., Google).', "Search for 'PS4 controller working mechanism and features' and review the top results for accurate information."]
+	[*] Generate Plan ['scroll: down', 'click: Add to Cart']
 
-	==>Give a prompt :Give a prompt :check the price history of 1tb ssd from 2018 to 2026
+	==> Give a prompt :in flipkart add boAt headphones to cart
 	[*] Testing Planner LLM...
-	[*] Generate Plan ['Open a web browser and navigate to a search engine (e.g., Google).', "Search for '1tb ssd price history 2018 2026' and visit a reliable price tracking website (e.g., PriceHistory.com, Google Trends, or a tech product price database)."]
+	[*] Generate Plan ['click: search bar', 'type: boAt headphones', 'press: Enter', 'click: first product result', 'scroll: down', 'click: Add to Cart']
+
+	==> Failure Simulation & Rethinking (Step 1 failed: 'Add to Cart' not found in viewport)
+	[*] Model Rethink Thought: The 'Add to Cart' button was not found in the current viewport, indicating it is off-screen below the fold. It is not advisable to repeat the failed click without adjusting the viewport. The corrective strategy is to scroll down first to bring the button into view before clicking.
+	[*] Corrective Steps: ['scroll: down', 'click: Add to Cart']
 
 for a 7b model :
 	==> Give a prompt :research about the ps4 controller and tell me its working

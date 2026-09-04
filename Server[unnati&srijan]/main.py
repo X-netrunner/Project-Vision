@@ -1,58 +1,30 @@
 import asyncio
-from datetime import datetime
+import traceback
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import json
-import os
 import uuid
-from planner import createPlan
-from vlm import predict_action, decode_base64_image
+from planner import createPlan, replanTask
+from vlm import predict_action
 
-app = FastAPI()
+app = FastAPI(title="Project Vision Browser Automation Server")
 
-SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
-SCREENSHOTS_DIR = os.path.join(SERVER_DIR, "screenshots")
-LOGS_DIR = os.path.join(SERVER_DIR, "logs")
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "service": "browser-automation-server", "model": "qwen3:8b"}
 
-os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
-os.makedirs(LOGS_DIR, exist_ok=True)
-
-
-MAX_LOG_IMAGE_CHARS = 2000
-
-
-def log_payload(direction: str, payload):
-    """Append a sent/received payload to logs/payloads.log with a timestamp.
-
-    The base64 image in screenshot payloads can be megabytes, so it is truncated
-    in the log to keep the file readable while still showing the message shape.
-    """
-    try:
-        loggable = payload
-        if isinstance(payload, dict):
-            loggable = dict(payload)
-            img = loggable.get("image")
-            if isinstance(img, str) and len(img) > MAX_LOG_IMAGE_CHARS:
-                loggable["image"] = img[:MAX_LOG_IMAGE_CHARS] + f"...<{len(img)} chars>"
-        entry = f"[{datetime.now().isoformat(timespec='seconds')}] {direction} {json.dumps(loggable)}\n"
-        with open(os.path.join(LOGS_DIR, "payloads.log"), "a", encoding="utf-8") as f:
-            f.write(entry)
-    except Exception as err:
-        print(f"[!] Failed to log payload: {err}")
-
-
-def save_screenshot(base64_img: str, request_id: str, step_index: int) -> str | None:
-    """Decode a base64 screenshot and store it in the screenshots folder."""
-    try:
-        img = decode_base64_image(base64_img)
-        ts = datetime.now().strftime("%H%M%S")
-        filename = f"{request_id}_step{step_index + 1}_{ts}.png"
-        path = os.path.join(SCREENSHOTS_DIR, filename)
-        img.save(path)
-        print(f"[+] Screenshot saved: {path}")
-        return path
-    except Exception as err:
-        print(f"[!] Could not save screenshot: {err}")
-        return None
+async def send_agent_action(websocket: WebSocket, request_id: str, tab_id: int | None, step_index: int, is_last_step: bool, inner_action: dict):
+    payload = {
+        "type": "AGENT_ACTION",
+        "request_id": request_id,
+        "action_id": f"action_{uuid.uuid4().hex[:6]}",
+        "step_index": step_index,
+        "is_last_step": is_last_step,
+        "action": inner_action
+    }
+    if tab_id is not None:
+        payload["tab_id"] = tab_id
+    print(f"[+] Sending AGENT_ACTION for step {step_index + 1}: {inner_action.get('action')} -> {payload}")
+    await websocket.send_text(json.dumps(payload))
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -60,141 +32,226 @@ async def websocket_endpoint(websocket: WebSocket):
     print("[*] Connection established with Extension")
 
     taskPlan = []
+    completed_steps = []
     current_step_index = 0
+    active_prompt = ""
     active_request_id = "req_001"
     active_tab_id = None
+    retry_count = 0
+    last_screenshot = ""
 
     try:
         while True:
             rawData = await websocket.receive_text()
             try:
                 message = json.loads(rawData)
-                msgType = message.get("type")
+                msgType = message.get("type") if isinstance(message, dict) else "STRING_PROMPT"
             except json.JSONDecodeError:
                 message = None
                 msgType = "STRING_PROMPT"
 
-            # Phase 1: Handle user prompt and generate step plan
+            # Phase 1: Handle User Prompt
             if msgType in ["USER_PROMPT", "STRING_PROMPT"]:
                 if isinstance(message, dict):
-                    userPrompt = message.get("prompt", "").strip()
+                    active_prompt = message.get("prompt", "").strip()
                     active_request_id = message.get("request_id", f"req_{uuid.uuid4().hex[:6]}")
                 else:
-                    userPrompt = rawData.strip()
+                    active_prompt = rawData.strip()
                     active_request_id = f"req_{uuid.uuid4().hex[:6]}"
 
-                if not userPrompt:
+                if not active_prompt:
                     continue
 
-                print(f"[*] Received prompt ({active_request_id}):", userPrompt)
-                log_payload("RECV <", userPrompt)
+                print(f"[*] Received prompt ({active_request_id}): {active_prompt}")
 
-                # Generate task plan via Ollama planner in background thread
-                taskPlan = await asyncio.to_thread(createPlan, userPrompt)
+                # Generate initial task plan with 8b model
+                taskPlan = await asyncio.to_thread(createPlan, active_prompt)
+                completed_steps = []
                 current_step_index = 0
+                retry_count = 0
 
                 print(f"[*] Task plan generated ({len(taskPlan)} steps):")
                 for i, step in enumerate(taskPlan):
                     print(f"\t Step {i+1}: {step}")
 
-                print("[*] Waiting for initial screenshot from extension...")
+                print("[*] Waiting for screenshot from extension...")
 
-            # Phase 2: Handle incoming screenshots (RAW_SCREENSHOT or REDACTED_SCREENSHOT)
+            # Phase 2: Handle Incoming Screenshots & Action Prediction
             elif message and msgType in ["RAW_SCREENSHOT", "REDACTED_SCREENSHOT"]:
                 active_request_id = message.get("request_id", active_request_id)
                 active_tab_id = message.get("tab_id", active_tab_id)
                 base64_img = message.get("image", "")
-                device_pixel_ratio = message.get("device_pixel_ratio", 1.0)
+                if base64_img:
+                    last_screenshot = base64_img
 
-                log_payload("RECV <", message)
+                # Check if action_result was bundled inside screenshot message
+                bundled_result = message.get("action_result")
+                if bundled_result and isinstance(bundled_result, dict):
+                    if bundled_result.get("success") is True:
+                        if current_step_index < len(taskPlan):
+                            completed_steps.append(taskPlan[current_step_index])
+                            current_step_index += 1
+                            retry_count = 0
+                    elif bundled_result.get("success") is False:
+                        # Action execution failed on client
+                        error_desc = bundled_result.get("error", "Client action execution failed")
+                        print(f"[!] Bundled action result reported failure: {error_desc}")
+                        if retry_count < 3 and current_step_index < len(taskPlan):
+                            failed_step = taskPlan[current_step_index]
+                            print(f"[*] Rethinking failed step: '{failed_step}'...")
+                            replan_res = await asyncio.to_thread(
+                                replanTask,
+                                user_prompt=active_prompt,
+                                failed_step=failed_step,
+                                error_msg=error_desc,
+                                completed_steps=completed_steps,
+                                remaining_steps=taskPlan[current_step_index + 1:]
+                            )
+                            thought = replan_res.get("thought", "")
+                            new_steps = replan_res.get("steps", [failed_step])
+                            print(f"[*] Model rethink thought: {thought}")
+                            print(f"[*] Corrective steps: {new_steps}")
+                            taskPlan = taskPlan[:current_step_index] + new_steps
+                            retry_count += 1
 
                 if not taskPlan:
                     print("[!] Screenshot received but taskPlan is empty.")
                     continue
 
                 if current_step_index >= len(taskPlan):
-                    print("[*] All planned steps have already been executed.")
+                    print("[*] All planned steps have been successfully executed.")
                     continue
 
                 currentSubGoal = taskPlan[current_step_index]
                 isDone = (current_step_index + 1) >= len(taskPlan)
 
-                print(f"[*] Processing step {current_step_index + 1}/{len(taskPlan)}: '{currentSubGoal}'")
-
-                save_screenshot(base64_img, active_request_id, current_step_index)
+                print(f"[*] Executing step {current_step_index + 1}/{len(taskPlan)}: '{currentSubGoal}'")
 
                 try:
-                    # Run VLM inference
                     inner_action = await asyncio.to_thread(
                         predict_action,
-                        base64_image=base64_img,
+                        base64_image=last_screenshot,
                         current_step=currentSubGoal,
                         step_index=current_step_index,
-                        is_last_step=isDone,
-                        device_pixel_ratio=device_pixel_ratio
+                        is_last_step=isDone
                     )
 
-                    # Structure AGENT_ACTION packet
-                    agent_action_payload = {
-                        "type": "AGENT_ACTION",
-                        "request_id": active_request_id,
-                        "action_id": f"action_{uuid.uuid4().hex[:6]}",
-                        "step_index": current_step_index,
-                        "is_last_step": isDone,
-                        "action": inner_action
-                    }
+                    # Check if visual target was not located in screenshot (e.g. element below fold)
+                    if inner_action.get("found") is False and retry_count < 3:
+                        print(f"[!] Element '{currentSubGoal}' not located in current viewport. Rethinking...")
+                        replan_res = await asyncio.to_thread(
+                            replanTask,
+                            user_prompt=active_prompt,
+                            failed_step=currentSubGoal,
+                            error_msg=f"Element '{currentSubGoal}' was not found in the current viewport/screenshot.",
+                            completed_steps=completed_steps,
+                            remaining_steps=taskPlan[current_step_index + 1:]
+                        )
+                        thought = replan_res.get("thought", "")
+                        new_steps = replan_res.get("steps", [currentSubGoal])
+                        print(f"[*] Model rethink thought: {thought}")
+                        print(f"[*] Corrective steps: {new_steps}")
+                        taskPlan = taskPlan[:current_step_index] + new_steps
+                        retry_count += 1
 
-                    if active_tab_id is not None:
-                        agent_action_payload["tab_id"] = active_tab_id
+                        # Predict action for the newly planned corrective step
+                        currentSubGoal = taskPlan[current_step_index]
+                        isDone = (current_step_index + 1) >= len(taskPlan)
+                        inner_action = await asyncio.to_thread(
+                            predict_action,
+                            base64_image=last_screenshot,
+                            current_step=currentSubGoal,
+                            step_index=current_step_index,
+                            is_last_step=isDone
+                        )
 
-                    print(f"[+] Sending AGENT_ACTION: {agent_action_payload}")
-                    log_payload("SEND >", agent_action_payload)
-                    await websocket.send_text(json.dumps(agent_action_payload))
+                    await send_agent_action(
+                        websocket=websocket,
+                        request_id=active_request_id,
+                        tab_id=active_tab_id,
+                        step_index=current_step_index,
+                        is_last_step=isDone,
+                        inner_action=inner_action
+                    )
 
-                    current_step_index += 1
-
-                except WebSocketDisconnect:
-                    # Extension closed the socket mid-step; let the outer handler
-                    # clean up instead of trying to send an error on a dead socket.
-                    raise
                 except Exception as err:
-                    detail = str(err) or f"{type(err).__name__} (no detail)"
-                    print(f"[!] Error processing step: {detail}")
-                    errorPayload = {
+                    print(f"[!] Error generating action: {err}")
+                    traceback.print_exc()
+                    await websocket.send_text(json.dumps({
                         "type": "ERROR",
                         "request_id": active_request_id,
-                        "error": detail
-                    }
-                    log_payload("SEND >", errorPayload)
-                    try:
-                        await websocket.send_text(json.dumps(errorPayload))
-                    except Exception:
-                        print("[!] Connection closed; unable to send error payload to extension.")
+                        "error": str(err)
+                    }))
 
-            # Phase 3: Action Execution Feedback
+            # Phase 3: Action Execution Result & Rethinking/Replanning
             elif message and msgType == "ACTION_RESULT":
-                log_payload("RECV <", message)
                 result = message.get("result", {})
                 success = result.get("success", False)
-                step_idx = result.get("step_index", 0)
+                step_idx = result.get("step_index", current_step_index)
 
                 if success:
-                    print(f"[+] Action step {step_idx} executed successfully.")
+                    print(f"[+] Step {step_idx + 1} executed successfully.")
                     if current_step_index < len(taskPlan):
-                        print(f"[*] Awaiting screenshot for Step {current_step_index + 1}: '{taskPlan[current_step_index]}'")
+                        completed_steps.append(taskPlan[current_step_index])
+                    current_step_index += 1
+                    retry_count = 0
                 else:
-                    print(f"[!] Action step {step_idx} failed: {result.get('error')}")
+                    error_desc = result.get("error", "Unknown execution failure")
+                    print(f"[!] Step {step_idx + 1} failed: {error_desc}")
+
+                    if retry_count < 3 and current_step_index < len(taskPlan):
+                        failed_step = taskPlan[current_step_index]
+                        print(f"[*] Rethinking failed step: '{failed_step}'...")
+
+                        # Trigger replanner to adjust remaining steps with 8b model
+                        replan_res = await asyncio.to_thread(
+                            replanTask,
+                            user_prompt=active_prompt,
+                            failed_step=failed_step,
+                            error_msg=error_desc,
+                            completed_steps=completed_steps,
+                            remaining_steps=taskPlan[current_step_index + 1:]
+                        )
+                        thought = replan_res.get("thought", "")
+                        new_steps = replan_res.get("steps", [failed_step])
+
+                        print(f"[*] Model rethink thought: {thought}")
+                        print(f"[*] Plan updated following rethink:")
+                        taskPlan = taskPlan[:current_step_index] + new_steps
+                        retry_count += 1
+
+                        for i, step in enumerate(taskPlan):
+                            print(f"\t Step {i+1}: {step}")
+
+                        # Immediately dispatch corrective action to client to continue pipeline
+                        next_step = taskPlan[current_step_index]
+                        isDone = (current_step_index + 1) >= len(taskPlan)
+                        inner_action = await asyncio.to_thread(
+                            predict_action,
+                            base64_image=last_screenshot,
+                            current_step=next_step,
+                            step_index=current_step_index,
+                            is_last_step=isDone
+                        )
+                        await send_agent_action(
+                            websocket=websocket,
+                            request_id=active_request_id,
+                            tab_id=active_tab_id,
+                            step_index=current_step_index,
+                            is_last_step=isDone,
+                            inner_action=inner_action
+                        )
+                    else:
+                        print("[!] Max retries reached for this step. Moving to next planned step.")
+                        current_step_index += 1
+                        retry_count = 0
 
     except WebSocketDisconnect:
         print("[!] Extension disconnected.")
-    except RuntimeError as err:
-        # Some uvicorn/starlette versions raise RuntimeError("WebSocket is not
-        # connected. Need to call 'accept' first.") when receive_text() is called
-        # after the peer has already closed the socket. Treat it as a disconnect.
-        print(f"[!] WebSocket connection lost: {err}")
-    except Exception as err:
-        print(f"[!] WebSocket handler error: {err}")
+    except Exception as e:
+        print(f"[!] Unexpected error: {e}")
+        traceback.print_exc()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=False, log_level="info")

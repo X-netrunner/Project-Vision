@@ -37,6 +37,88 @@ const demoButton =
     "demo"
   ) as HTMLButtonElement;
 
+const debugToggle =
+  document.getElementById(
+    "debug-toggle"
+  ) as HTMLButtonElement;
+
+const debugPanel =
+  document.getElementById(
+    "debug-panel"
+  ) as HTMLDivElement;
+
+const debugHealthButton =
+  document.getElementById(
+    "debug-health"
+  ) as HTMLButtonElement;
+
+const debugContextButton =
+  document.getElementById(
+    "debug-context"
+  ) as HTMLButtonElement;
+
+const debugPingButton =
+  document.getElementById(
+    "debug-ping"
+  ) as HTMLButtonElement;
+
+const debugActionButton =
+  document.getElementById(
+    "debug-action"
+  ) as HTMLButtonElement;
+
+const debugVerbose =
+  document.getElementById(
+    "debug-verbose"
+  ) as HTMLInputElement;
+
+const srijanUrlElement = document.getElementById("srijan-url") as HTMLInputElement;
+const srijanSaveButton = document.getElementById("srijan-save") as HTMLButtonElement;
+const srijanReconnectButton = document.getElementById("srijan-reconnect") as HTMLButtonElement;
+const srijanConfigStatus = document.getElementById("srijan-config-status") as HTMLDivElement;
+const srijanConnectionStatus = document.getElementById("srijan-connection-status") as HTMLDivElement;
+
+let savedSrijanUrl = "";
+let currentSrijanStatus = "not_configured";
+
+function renderSrijanConnectionState(): void {
+  const enteredUrl = srijanUrlElement.value.trim();
+  const isConfigured = !!savedSrijanUrl;
+  const isDirty = enteredUrl !== savedSrijanUrl;
+
+  if (!isConfigured) {
+    srijanConfigStatus.textContent = isDirty && enteredUrl
+      ? "URL entered — click Save URL"
+      : "URL not configured";
+    srijanConfigStatus.dataset.state = isDirty && enteredUrl ? "dirty" : "empty";
+  } else if (isDirty) {
+    srijanConfigStatus.textContent = "Unsaved URL change";
+    srijanConfigStatus.dataset.state = "dirty";
+  } else {
+    srijanConfigStatus.textContent = "URL saved";
+    srijanConfigStatus.dataset.state = "saved";
+  }
+
+  const labels: Record<string, string> = {
+    not_configured: "Connection: NOT CONFIGURED",
+    invalid_url: "Connection: INVALID URL",
+    connecting: "Connection: CONNECTING…",
+    open: "Connection: CONNECTED",
+    closed: "Connection: CLOSED — reconnecting…",
+    error: "Connection: ERROR — check extension console",
+  };
+  srijanConnectionStatus.textContent = labels[currentSrijanStatus] ?? `Connection: ${currentSrijanStatus.toUpperCase()}`;
+  srijanConnectionStatus.dataset.state = currentSrijanStatus;
+}
+
+function updateSrijanStatus(status: string, url?: string): void {
+  currentSrijanStatus = status;
+  if (typeof url === "string" && url !== savedSrijanUrl) {
+    // Do not overwrite a URL the user is currently editing.
+  }
+  renderSrijanConnectionState();
+}
+
 function setStatus(
   text: string
 ): void {
@@ -290,6 +372,68 @@ function scrollToBottom(): void {
     messagesElement.scrollHeight;
 }
 
+async function loadSrijanConfig(): Promise<void> {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "GET_SRIJAN_CONFIG" });
+    savedSrijanUrl = typeof response?.url === "string" ? response.url.trim() : "";
+    srijanUrlElement.value = savedSrijanUrl;
+    currentSrijanStatus = typeof response?.status === "string"
+      ? response.status
+      : (savedSrijanUrl ? "connecting" : "not_configured");
+    renderSrijanConnectionState();
+    if (savedSrijanUrl) {
+      setStatus("Srijan URL loaded. Waiting for connection status…");
+    }
+  } catch (error) {
+    currentSrijanStatus = "invalid_url";
+    renderSrijanConnectionState();
+    setStatus(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function saveSrijanConfig(): Promise<void> {
+  const url = srijanUrlElement.value.trim();
+  srijanSaveButton.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "SET_SRIJAN_CONFIG", url });
+    if (response?.success) {
+      savedSrijanUrl = typeof response.url === "string" ? response.url.trim() : "";
+      srijanUrlElement.value = savedSrijanUrl;
+      currentSrijanStatus = savedSrijanUrl ? "connecting" : "not_configured";
+      renderSrijanConnectionState();
+      setStatus(savedSrijanUrl
+        ? "Srijan URL saved. Connecting…"
+        : "Srijan URL cleared.");
+      await chrome.runtime.sendMessage({ type: "RECONNECT_SRIJAN" });
+    } else {
+      setStatus(response?.error ?? "Could not save Srijan URL.");
+      currentSrijanStatus = "invalid_url";
+      renderSrijanConnectionState();
+    }
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : String(error));
+  } finally {
+    srijanSaveButton.disabled = false;
+  }
+}
+
+async function reconnectSrijan(): Promise<void> {
+  const enteredUrl = srijanUrlElement.value.trim();
+  if (enteredUrl !== savedSrijanUrl) {
+    setStatus("Save the URL first, then reconnect.");
+    renderSrijanConnectionState();
+    return;
+  }
+  currentSrijanStatus = savedSrijanUrl ? "connecting" : "not_configured";
+  renderSrijanConnectionState();
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "RECONNECT_SRIJAN" });
+    setStatus(response?.success === false ? (response.error ?? "Reconnect failed.") : "Srijan reconnect requested.");
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : String(error));
+  }
+}
+
 async function loadMessages(): Promise<void> {
   try {
     const response =
@@ -465,6 +609,64 @@ async function runDemo(): Promise<void> {
   }
 }
 
+async function debugRequest(type: string, extra: Record<string, unknown> = {}): Promise<void> {
+  setStatus(`Debug: ${type}...`);
+  try {
+    const response = await chrome.runtime.sendMessage({ type, ...extra });
+    if (debugVerbose.checked) {
+      appendMessage({
+        id: crypto.randomUUID(),
+        sender: "system",
+        timestamp: Date.now(),
+        type: "DEBUG_RESULT",
+        text: JSON.stringify(response, null, 2),
+        raw: response,
+      });
+    }
+    setStatus(
+      response?.success
+        ? `Debug: ${type} passed.`
+        : `Debug: ${response?.error ?? "failed"}`
+    );
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : String(error));
+  }
+}
+
+srijanUrlElement.addEventListener("input", () => {
+  renderSrijanConnectionState();
+});
+
+srijanSaveButton.addEventListener("click", () => {
+  void saveSrijanConfig();
+});
+
+srijanReconnectButton.addEventListener("click", () => {
+  void reconnectSrijan();
+});
+
+debugToggle.addEventListener("click", () => {
+  debugPanel.hidden = !debugPanel.hidden;
+});
+
+debugHealthButton.addEventListener("click", () => {
+  void debugRequest("DEBUG_LOCAL_SERVER_HEALTH");
+});
+
+debugContextButton.addEventListener("click", () => {
+  void debugRequest("DEBUG_INITIAL_CONTEXT", {
+    prompt: "Debug test: send the current page context with its initial screenshot.",
+  });
+});
+
+debugPingButton.addEventListener("click", () => {
+  void debugRequest("DEBUG_NATIVE_HOST_PING");
+});
+
+debugActionButton.addEventListener("click", () => {
+  void debugRequest("DEBUG_CONTENT_PING");
+});
+
 /*
  * New JSON message from background.
  */
@@ -472,6 +674,14 @@ chrome.runtime.onMessage.addListener(
   (
     message
   ) => {
+    if (message?.type === "SRIJAN_STATUS") {
+      updateSrijanStatus(
+        typeof message.status === "string" ? message.status : "unknown",
+        typeof message.url === "string" ? message.url : undefined
+      );
+      return;
+    }
+
     if (
       message?.type !==
       "CHAT_MESSAGE"
@@ -545,5 +755,6 @@ demoButton.addEventListener(
 );
 
 void loadMessages();
+void loadSrijanConfig();
 
 promptElement.focus();

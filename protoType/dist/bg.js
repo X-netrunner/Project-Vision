@@ -1,9 +1,18 @@
 import { validateAction } from "./actions/validator.js";
 import { executeContentAction } from "./actions/executor.js";
-const SRIJAN_WS_URL = "ws://127.0.0.1:8001/ws";
-// const VARUN_WS_URL = "YOUR_EXISTING_VARUN_WS_URL";
-// let varunSocket: WebSocket | null = null;
+const SRIJAN_WS_URL_STORAGE_KEY = "projectVisionSrijanWsUrl";
+const DEFAULT_SRIJAN_WS_URL = "";
+const VARUN_WS_URL = "ws://127.0.0.1:8000/ws";
+let varunSocket = null;
+let varunConnectPromise = null;
+const varunPendingRequests = new Map();
 let offscreenPort = null;
+let nativeServerPort = null;
+let nativeHostRetryTimer = null;
+let nativeHostRetryDelayMs = 2000;
+let srijanConnectionStatus = "not_configured";
+let srijanConnectionUrl = "";
+const NATIVE_HOST_NAME = "com.projectvision.local_server";
 const OFFSCREEN_URL = "offscreen.html";
 const CHAT_STORAGE_KEY = "projectVisionChatMessages";
 const MAX_CHAT_MESSAGES = 100;
@@ -45,21 +54,82 @@ function createChatMessage(sender, options) {
 function log(...args) {
     console.log("[Project-Vision]", ...args);
 }
+async function getSrijanWsUrl() {
+    try {
+        const stored = await chrome.storage.local.get(SRIJAN_WS_URL_STORAGE_KEY);
+        return typeof stored[SRIJAN_WS_URL_STORAGE_KEY] === "string"
+            ? stored[SRIJAN_WS_URL_STORAGE_KEY].trim()
+            : DEFAULT_SRIJAN_WS_URL;
+    }
+    catch {
+        return DEFAULT_SRIJAN_WS_URL;
+    }
+}
 function sendToSrijan(message) {
     if (!offscreenPort) {
-        log("Srijan WebSocket bridge is not connected");
+        log("SRIJAN_SEND_BRIDGE_UNAVAILABLE");
         return false;
     }
     try {
+        const serialized = JSON.stringify(message);
         offscreenPort.postMessage({
             type: "WS_SEND",
-            data: JSON.stringify(message),
+            data: serialized,
+        });
+        log("SRIJAN_BRIDGE_TX", {
+            type: message?.type,
+            requestId: message?.request_id,
+            bytes: serialized.length,
         });
         return true;
     }
     catch (error) {
         log("Failed to send message to Srijan:", error);
         return false;
+    }
+}
+function scheduleNativeHostRetry() {
+    if (nativeHostRetryTimer !== null)
+        return;
+    const delay = nativeHostRetryDelayMs;
+    nativeHostRetryDelayMs = Math.min(nativeHostRetryDelayMs * 2, 30000);
+    nativeHostRetryTimer = setTimeout(() => {
+        nativeHostRetryTimer = null;
+        startLocalServerHost();
+    }, delay);
+}
+function startLocalServerHost() {
+    if (nativeServerPort || nativeHostRetryTimer !== null)
+        return;
+    try {
+        if (nativeServerPort) {
+            return;
+        }
+        const port = chrome.runtime.connectNative(NATIVE_HOST_NAME);
+        nativeServerPort = port;
+        nativeHostRetryDelayMs = 2000;
+        port.onMessage.addListener((message) => {
+            log("Local server host:", message);
+            void addChatMessage(createChatMessage("system", {
+                type: "LOCAL_SERVER_STATUS",
+                text: message?.status === "started"
+                    ? `Local app.py started (PID ${String(message.pid ?? "unknown")}).`
+                    : `Local server: ${JSON.stringify(message)}`,
+            }));
+        });
+        port.onDisconnect.addListener(() => {
+            const error = chrome.runtime.lastError;
+            nativeServerPort = null;
+            log("Local server native host disconnected:", error?.message ?? "no error");
+            if (nativeServerPort === null) {
+                scheduleNativeHostRetry();
+            }
+        });
+        port.postMessage({ type: "PING" });
+        log("Requested local app.py startup through native host.");
+    }
+    catch (error) {
+        log("Local server auto-start unavailable:", error);
     }
 }
 async function ensureOffscreenDocument() {
@@ -76,6 +146,23 @@ async function ensureOffscreenDocument() {
         log("Offscreen document create (may already exist):", error);
     }
 }
+async function waitForOffscreenBridge(timeoutMs = 5000) {
+    if (offscreenPort) {
+        return true;
+    }
+    log("SRIJAN_WAITING_FOR_OFFSCREEN_BRIDGE", { timeoutMs });
+    await ensureOffscreenDocument();
+    const startedAt = Date.now();
+    while (!offscreenPort && Date.now() - startedAt < timeoutMs) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (offscreenPort) {
+        log("SRIJAN_OFFSCREEN_BRIDGE_READY", { waitedMs: Date.now() - startedAt });
+        return true;
+    }
+    log("SRIJAN_OFFSCREEN_BRIDGE_TIMEOUT", { timeoutMs });
+    return false;
+}
 function registerOffscreenListener() {
     chrome.runtime.onConnect.addListener((port) => {
         if (port.name !== "offscreen") {
@@ -83,6 +170,17 @@ function registerOffscreenListener() {
         }
         log("Offscreen bridge connected.");
         offscreenPort = port;
+        void getSrijanWsUrl().then((url) => {
+            if (offscreenPort !== port)
+                return;
+            try {
+                port.postMessage({ type: "WS_SET_URL", data: url });
+                log("SRIJAN_URL_SENT_TO_OFFSCREEN", { url: url || "<not configured>" });
+            }
+            catch (error) {
+                log("Failed to send Srijan URL to offscreen bridge:", error);
+            }
+        });
         port.onMessage.addListener((message) => {
             const msg = message;
             if (msg?.type === "WS_MSG" &&
@@ -93,8 +191,26 @@ function registerOffscreenListener() {
                 return;
             }
             if (msg?.type === "WS_STATUS") {
-                log("Srijan WebSocket status:", msg
-                    .status);
+                const statusMessage = msg;
+                srijanConnectionStatus = typeof statusMessage.status === "string"
+                    ? statusMessage.status
+                    : "unknown";
+                srijanConnectionUrl = typeof statusMessage.url === "string"
+                    ? statusMessage.url
+                    : "";
+                log("Srijan WebSocket status:", srijanConnectionStatus, "url:", srijanConnectionUrl || "<not configured>", "code:", statusMessage.code ?? "-", "reason:", statusMessage.reason ?? "-", "clean:", statusMessage.wasClean ?? "-");
+                void chrome.runtime.sendMessage({
+                    type: "SRIJAN_STATUS",
+                    status: srijanConnectionStatus,
+                    url: srijanConnectionUrl,
+                    code: statusMessage.code,
+                    reason: statusMessage.reason,
+                    wasClean: statusMessage.wasClean,
+                }).catch(() => { });
+                return;
+            }
+            if (msg?.type === "WS_ERROR") {
+                log("Srijan WebSocket error:", msg);
             }
         });
         port.onDisconnect.addListener(() => {
@@ -189,24 +305,100 @@ async function captureScreenshot(tabId) {
         });
     });
 }
-/*
-async function sendRawScreenshotToVarun(
-  message: RawScreenshotMessage
-): Promise<boolean> {
-  if (
-    !varunSocket ||
-    varunSocket.readyState !== WebSocket.OPEN
-  ) {
-    return false;
-  }
-
-  varunSocket.send(
-    JSON.stringify(message)
-  );
-
-  return true;
+function rejectPendingVarunRequests(error) {
+    for (const [requestId, pending] of varunPendingRequests) {
+        clearTimeout(pending.timer);
+        pending.reject(error);
+        varunPendingRequests.delete(requestId);
+    }
 }
-*/
+function connectToVarun() {
+    if (varunSocket?.readyState === WebSocket.OPEN) {
+        return Promise.resolve(varunSocket);
+    }
+    if (varunConnectPromise) {
+        return varunConnectPromise;
+    }
+    varunConnectPromise = new Promise((resolve, reject) => {
+        let settled = false;
+        const socket = new WebSocket(VARUN_WS_URL);
+        varunSocket = socket;
+        socket.onopen = () => {
+            settled = true;
+            varunConnectPromise = null;
+            log("Connected to Varun:", VARUN_WS_URL);
+            resolve(socket);
+        };
+        socket.onmessage = (event) => {
+            if (typeof event.data !== "string") {
+                return;
+            }
+            try {
+                const message = JSON.parse(event.data);
+                const requestId = message.request_id;
+                if (!requestId) {
+                    return;
+                }
+                const pending = varunPendingRequests.get(requestId);
+                if (!pending) {
+                    return;
+                }
+                varunPendingRequests.delete(requestId);
+                clearTimeout(pending.timer);
+                if (message.type === "REDACTED_SCREENSHOT") {
+                    pending.resolve(message);
+                }
+                else {
+                    pending.reject(new Error(message.error));
+                }
+            }
+            catch (error) {
+                log("Failed to parse Varun response:", error);
+            }
+        };
+        socket.onerror = () => {
+            if (!settled) {
+                settled = true;
+                varunConnectPromise = null;
+                reject(new Error(`Varun is not reachable at ${VARUN_WS_URL}.`));
+            }
+        };
+        socket.onclose = () => {
+            if (varunSocket === socket) {
+                varunSocket = null;
+            }
+            varunConnectPromise = null;
+            rejectPendingVarunRequests(new Error("Varun WebSocket connection closed."));
+            if (!settled) {
+                settled = true;
+                reject(new Error(`Varun closed the connection at ${VARUN_WS_URL}.`));
+            }
+        };
+    });
+    return varunConnectPromise;
+}
+async function sendRawScreenshotToVarun(message) {
+    const socket = await connectToVarun();
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            varunPendingRequests.delete(message.request_id);
+            reject(new Error("Varun did not return a redacted screenshot within 30 seconds."));
+        }, 30000);
+        varunPendingRequests.set(message.request_id, {
+            resolve,
+            reject,
+            timer,
+        });
+        try {
+            socket.send(JSON.stringify(message));
+        }
+        catch (error) {
+            clearTimeout(timer);
+            varunPendingRequests.delete(message.request_id);
+            reject(error instanceof Error ? error : new Error(String(error)));
+        }
+    });
+}
 async function getDevicePixelRatio(tabId) {
     try {
         const results = await chrome.scripting.executeScript({
@@ -222,25 +414,31 @@ async function getDevicePixelRatio(tabId) {
         return 1;
     }
 }
+async function sendCapturedScreenshotToSrijan(requestId, tabId, stepIndex, actionResult, image) {
+    const devicePixelRatio = await getDevicePixelRatio(tabId);
+    const rawMessage = {
+        type: "RAW_SCREENSHOT",
+        request_id: requestId,
+        tab_id: tabId,
+        step_index: stepIndex,
+        image,
+        action_result: actionResult,
+        device_pixel_ratio: devicePixelRatio,
+    };
+    const redactedMessage = await sendRawScreenshotToVarun(rawMessage);
+    const srijanMessage = {
+        ...rawMessage,
+        image: redactedMessage.image,
+    };
+    return sendToSrijan(srijanMessage);
+}
 async function sendRawScreenshotToSrijan(requestId, tabId, stepIndex, actionResult) {
     try {
         const image = await captureScreenshot(tabId);
-        const devicePixelRatio = await getDevicePixelRatio(tabId);
-        const message = {
-            type: "RAW_SCREENSHOT",
-            request_id: requestId,
-            tab_id: tabId,
-            step_index: stepIndex,
-            image,
-            action_result: actionResult,
-            device_pixel_ratio: devicePixelRatio,
-        };
-        return sendToSrijan(message);
+        return await sendCapturedScreenshotToSrijan(requestId, tabId, stepIndex, actionResult, image);
     }
     catch (error) {
-        sendErrorToSrijan(requestId, error instanceof Error
-            ? error.message
-            : String(error));
+        sendErrorToSrijan(requestId, error instanceof Error ? error.message : String(error));
         return false;
     }
 }
@@ -452,7 +650,18 @@ async function executeAgentAction(message) {
     if (result.success &&
         !message.is_last_step) {
         try {
-            await sendRawScreenshotToSrijan(message.request_id, tabId, action.step_index, result);
+            // Background actions can change which tab is active (open_tab,
+            // switch_tab, close_tab). Capture the tab that is active after the
+            // action rather than blindly reusing the pre-action tab id.
+            let screenshotTabId = tabId;
+            if (backgroundActions.has(action.action)) {
+                const activeAfterAction = await getActiveTab();
+                if (activeAfterAction && typeof activeAfterAction.id === "number") {
+                    screenshotTabId = activeAfterAction.id;
+                }
+            }
+            await waitForTabReady(screenshotTabId);
+            await sendRawScreenshotToSrijan(message.request_id, screenshotTabId, action.step_index, result);
         }
         catch (error) {
             log("Failed to send screenshot after action:", error);
@@ -524,9 +733,77 @@ async function startAgent(prompt) {
         };
     }
     const requestId = crypto.randomUUID();
+    // The popup can submit a prompt immediately after saving the URL.
+    // The offscreen document may still be starting, so wait for its
+    // bridge instead of failing the prompt with a false "not connected"
+    // error. The offscreen WebSocket itself queues while CONNECTING.
+    const bridgeReady = await waitForOffscreenBridge(5000);
+    if (!bridgeReady) {
+        const error = "Srijan bridge is still starting. Please retry in a moment.";
+        await addChatMessage(createChatMessage("system", {
+            type: "CONNECTION_ERROR",
+            text: error,
+        }));
+        return { success: false, error };
+    }
+    const srijanUrl = await getSrijanWsUrl();
+    if (!srijanUrl) {
+        const error = "Srijan WebSocket URL is not configured. Set your ngrok wss:// URL in the extension Debug panel.";
+        log("SRIJAN_NOT_CONFIGURED", error);
+        return { success: false, error };
+    }
+    const activeTab = await getActiveTab();
+    if (!activeTab || typeof activeTab.id !== "number") {
+        return {
+            success: false,
+            error: "No active browser tab found",
+        };
+    }
+    let initialScreenshot;
+    try {
+        initialScreenshot = await captureScreenshot(activeTab.id);
+    }
+    catch (error) {
+        await addChatMessage(createChatMessage("user", {
+            type: "USER_PROMPT",
+            text: cleanPrompt,
+        }));
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+        };
+    }
+    const devicePixelRatio = await getDevicePixelRatio(activeTab.id);
+    const rawInitialMessage = {
+        type: "RAW_SCREENSHOT",
+        request_id: requestId,
+        tab_id: activeTab.id,
+        step_index: 0,
+        image: initialScreenshot,
+        action_result: null,
+        device_pixel_ratio: devicePixelRatio,
+    };
+    let redactedInitialMessage;
+    try {
+        redactedInitialMessage =
+            await sendRawScreenshotToVarun(rawInitialMessage);
+    }
+    catch (error) {
+        const errorText = error instanceof Error ? error.message : String(error);
+        await addChatMessage(createChatMessage("system", {
+            type: "VARUN_ERROR",
+            text: `Varun failed to process the screenshot: ${errorText}`,
+        }));
+        return {
+            success: false,
+            error: errorText,
+        };
+    }
     await addChatMessage(createChatMessage("user", {
         type: "USER_PROMPT",
         text: cleanPrompt,
+        image: redactedInitialMessage.image,
+        raw: redactedInitialMessage,
     }));
     const promptSent = sendUserPromptToSrijan(requestId, cleanPrompt);
     if (!promptSent) {
@@ -539,16 +816,10 @@ async function startAgent(prompt) {
             error: "Srijan server is not connected",
         };
     }
-    const activeTab = await getActiveTab();
-    if (!activeTab ||
-        typeof activeTab.id !==
-            "number") {
-        return {
-            success: false,
-            error: "No active browser tab found",
-        };
-    }
-    const screenshotSent = await sendRawScreenshotToSrijan(requestId, activeTab.id, 0, null);
+    const screenshotSent = sendToSrijan({
+        ...rawInitialMessage,
+        image: redactedInitialMessage.image,
+    });
     if (!screenshotSent) {
         await addChatMessage(createChatMessage("system", {
             text: "Prompt was sent, but the initial screenshot could not be sent.",
@@ -562,6 +833,64 @@ async function startAgent(prompt) {
     return {
         success: true,
     };
+}
+async function checkLocalServerHealth() {
+    return new Promise((resolve) => {
+        let settled = false;
+        const socket = new WebSocket(VARUN_WS_URL);
+        const finish = (result) => {
+            if (settled)
+                return;
+            settled = true;
+            try {
+                socket.close();
+            }
+            catch { }
+            resolve(result);
+        };
+        const timer = setTimeout(() => finish({ success: false, error: "Local app.py server did not accept a WebSocket connection on port 8000." }), 2500);
+        socket.onopen = () => {
+            clearTimeout(timer);
+            finish({ success: true });
+        };
+        socket.onerror = () => {
+            clearTimeout(timer);
+            finish({ success: false, error: `Local app.py server is not reachable on ${VARUN_WS_URL}.` });
+        };
+    });
+}
+async function debugInitialContext(prompt) {
+    return startAgent(prompt);
+}
+async function debugNativeHostPing() {
+    if (!nativeServerPort) {
+        startLocalServerHost();
+        return { success: false, error: "Native host is not connected. Check Native Messaging registration and retry." };
+    }
+    try {
+        nativeServerPort.postMessage({ type: "PING" });
+        return { success: true };
+    }
+    catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+}
+async function debugContentPing() {
+    const tab = await getActiveTab();
+    if (!tab || typeof tab.id !== "number") {
+        return { success: false, error: "No active browser tab found" };
+    }
+    try {
+        await waitForTabReady(tab.id);
+        await ensureContentScript(tab.id);
+        const response = await chrome.tabs.sendMessage(tab.id, { type: "PING" });
+        return response?.success === true
+            ? { success: true }
+            : { success: false, error: "Content script did not answer PING." };
+    }
+    catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
 }
 async function localScreenshotTest() {
     const activeTab = await getActiveTab();
@@ -619,6 +948,83 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         typeof message !==
             "object") {
         return;
+    }
+    if (message.type === "GET_SRIJAN_CONFIG") {
+        void getSrijanWsUrl().then((url) => {
+            srijanConnectionUrl = url;
+            if (!url)
+                srijanConnectionStatus = "not_configured";
+            sendResponse({ success: true, url, status: srijanConnectionStatus });
+        });
+        return true;
+    }
+    if (message.type === "SET_SRIJAN_CONFIG") {
+        void (async () => {
+            const url = typeof message.url === "string" ? message.url.trim() : "";
+            if (url) {
+                let parsed;
+                try {
+                    parsed = new URL(url);
+                }
+                catch {
+                    return { success: false, error: "Invalid WebSocket URL." };
+                }
+                if (parsed.protocol !== "wss:" && parsed.protocol !== "ws:") {
+                    return { success: false, error: "Srijan URL must start with wss:// or ws://." };
+                }
+                if (!parsed.pathname.endsWith("/ws")) {
+                    return { success: false, error: "Srijan URL must end with /ws." };
+                }
+            }
+            await chrome.storage.local.set({ [SRIJAN_WS_URL_STORAGE_KEY]: url });
+            srijanConnectionUrl = url;
+            srijanConnectionStatus = url ? "connecting" : "not_configured";
+            log("SRIJAN_CONFIG_SAVED", { url: url || "<not configured>" });
+            if (offscreenPort) {
+                try {
+                    offscreenPort.postMessage({ type: "WS_SET_URL", data: url });
+                }
+                catch (error) {
+                    log("Failed to update Srijan URL in offscreen bridge:", error);
+                }
+            }
+            return { success: true, url, status: srijanConnectionStatus };
+        })().then(sendResponse).catch((error) => sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) }));
+        return true;
+    }
+    if (message.type === "RECONNECT_SRIJAN") {
+        if (!offscreenPort) {
+            sendResponse({ success: false, error: "Srijan offscreen bridge is not connected yet." });
+            return true;
+        }
+        try {
+            offscreenPort.postMessage({ type: "WS_RECONNECT" });
+            srijanConnectionStatus = srijanConnectionUrl ? "connecting" : "not_configured";
+            sendResponse({ success: true, status: srijanConnectionStatus });
+        }
+        catch (error) {
+            sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
+        }
+        return true;
+    }
+    if (message.type === "DEBUG_LOCAL_SERVER_HEALTH") {
+        void checkLocalServerHealth().then(sendResponse);
+        return true;
+    }
+    if (message.type === "DEBUG_INITIAL_CONTEXT") {
+        const prompt = typeof message.prompt === "string" ? message.prompt : "Debug initial context";
+        void debugInitialContext(prompt).then(sendResponse).catch((error) => {
+            sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
+        });
+        return true;
+    }
+    if (message.type === "DEBUG_NATIVE_HOST_PING") {
+        void debugNativeHostPing().then(sendResponse);
+        return true;
+    }
+    if (message.type === "DEBUG_CONTENT_PING") {
+        void debugContentPing().then(sendResponse);
+        return true;
     }
     if (message.type ===
         "START_AGENT") {
@@ -740,4 +1146,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 registerOffscreenListener();
 void setupOffscreenBridge();
+startLocalServerHost();
+chrome.runtime.onStartup.addListener(startLocalServerHost);
+chrome.runtime.onInstalled.addListener(startLocalServerHost);
 log("Background service worker started");

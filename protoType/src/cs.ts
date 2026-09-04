@@ -306,7 +306,7 @@
 
     window.scrollBy({
       top: distance,
-      behavior: "smooth",
+      behavior: "auto",
     });
 
     return {
