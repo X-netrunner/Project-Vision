@@ -333,7 +333,15 @@ def predict_action(
         target_desc = "the currently focused/active text input field or search bar"
     else:
         lower_target = clean_text.lower()
-        if "add to cart" in lower_target or "cart" in lower_target:
+        if " - " in clean_text:
+            field_name, opt_name = clean_text.split(" - ", 1)
+            field_name = field_name.strip().rstrip("*").strip()
+            opt_name = opt_name.strip()
+            target_desc = f"the '{opt_name}' option button (radio button or checkbox) next to '{opt_name}' under '{field_name}'"
+        elif lower_target.startswith("input field for "):
+            field_name = clean_text[len("input field for "):].strip().rstrip("*").strip()
+            target_desc = f"the blank text input box or entry field below '{field_name}'"
+        elif "add to cart" in lower_target or "cart" in lower_target:
             target_desc = "the 'Add to Cart' or 'ADD TO CART' button"
         elif "search" in lower_target and ("bar" in lower_target or "input" in lower_target):
             target_desc = "the search bar or search input field"
@@ -411,72 +419,94 @@ def predict_action(
 
 
 FORM_ANALYSIS_PROMPT = (
-    "This is a web form. Identify every text entry field (input or textarea) "
-    "visible on the screen. For each field output:\n"
-    "- label: the visible placeholder text or label next to the field\n"
-    "- box: the field's bounding box as [X1,Y1,X2,Y2] where X is horizontal and "
-    "Y is vertical, top-left then bottom-right, each normalized to 0-1000\n"
-    "- pii: true only if the field is Personal Identifiable Information (email, "
-    "phone, password, full name, address, date of birth, SSN) OR its label/input "
-    "is hidden under a blur or black box redaction\n"
+    "This is a web form. Identify EVERY fillable field visible on the screen.\n"
+    "For each field output:\n"
+    "- type: \"text\" (for text inputs, email, name, search), \"radio\" (for round radio choice buttons), or \"checkbox\" (for square check boxes)\n"
+    "- label: the visible question title, label, or placeholder next to the field\n"
+    "- box: the field's bounding box as [X1,Y1,X2,Y2] normalized to 0-1000 (top-left then bottom-right)\n"
+    "- options: array of option labels for choice fields (e.g. [\"Option 1\"] or [\"true\", \"false\"]). For text fields use []\n"
+    "- pii: true if the field asks for personal data (name, email, phone, password, address) OR if its input/label is blurred/masked. Otherwise false.\n"
     "Rules:\n"
-    "- Non-sensitive fields like 'search', 'subject', 'query', 'comments', or a "
-    "generic text box are pii=false.\n"
-    "- If a field's label or value area is blacked-out/blurred, you can still fill "
-    "peer non-redacted fields, but mark the redacted one as pii=true.\n"
+    "- If a field has visible choices/options, classify type as \"radio\" or \"checkbox\" and list all options in the options array.\n"
+    "- If a field is blurred, blacked-out, or asks for name/email/phone, set pii: true.\n"
     "Output ONLY a JSON object, no commentary:\n"
-    '{"fields":[{"label":"<label or placeholder>","box":[x1,y1,x2,y2],"pii":true_or_false}]}\n'
-    'If there are no text fields, output {"fields":[]}.'
+    '{"fields":[{"type":"text|radio|checkbox","label":"<label>","box":[x1,y1,x2,y2],"options":["opt1"],"pii":true_or_false}]}\n'
+    'If there are no fillable fields, output {"fields":[]}.'
 )
-
-
-FORM_FIELD_RE = re.compile(
-    r'"box"\s*:\s*\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]',
-    re.IGNORECASE,
-)
-FORM_LABEL_RE = re.compile(r'"label"\s*:\s*"([^"]*)"', re.IGNORECASE)
-FORM_PII_RE = re.compile(r'"pii"\s*:\s*(true|false)', re.IGNORECASE)
 
 
 def _extract_fields_from_json(output_text: str) -> list[dict]:
     """Defensively pull field records out of the VLM's JSON answer.
 
-    Prefers the structured {"fields": [...]} object but also tolerates a bare
-    array or label/box/pii triples scattered anywhere in the reply.
+    Handles valid JSON, markdown code fences, and truncated JSON by recovering
+    individual field objects. Guarantees coherent field dictionaries.
     """
-    text = output_text or ""
-    text = re.sub(r"```(?:json)?", "", text)
-    text = text.replace("```", "")
+    text = (output_text or "").strip()
+    text = re.sub(r"^```(?:json)?", "", text)
+    text = re.sub(r"```$", "", text).strip()
+
+    raw_list = []
+    # 1. Try direct JSON parsing
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict) and "fields" in data:
+            raw_list = data["fields"]
+        elif isinstance(data, list):
+            raw_list = data
+    except Exception:
+        pass
+
+    # 2. If direct parse failed (e.g. truncated), extract individual completed {...} objects
+    if not raw_list:
+        obj_matches = re.findall(r"\{[^{}]*\}", text)
+        for m in obj_matches:
+            try:
+                obj = json.loads(m)
+                if isinstance(obj, dict) and ("label" in obj or "box" in obj):
+                    raw_list.append(obj)
+            except Exception:
+                continue
+
+    PII_KEYWORDS = ["name", "email", "phone", "mobile", "password", "address", "ssn", "dob", "birth", "credit"]
 
     fields: list[dict] = []
+    for f in raw_list:
+        if not isinstance(f, dict):
+            continue
+        label = str(f.get("label", "")).strip()
+        ftype = str(f.get("type", "text")).lower()
+        opts = f.get("options") or []
+        if isinstance(opts, str):
+            opts = [o.strip().strip("\"'") for o in opts.split(",") if o.strip()]
 
-    m = re.search(r'"fields"\s*:\s*\[\s*(.*?)\s*\]\s*\}?\s*$', text, re.DOTALL | re.IGNORECASE)
-    block = m.group(1) if m else text
+        # Correct field type if options exist
+        if opts and ftype == "text":
+            ftype = "checkbox" if any(w in label.lower() for w in ["tick", "check", "multi"]) else "radio"
 
-    boxes = FORM_FIELD_RE.findall(block or text)
-    labels = FORM_LABEL_RE.findall(block or text)
-    piis = FORM_PII_RE.findall(block or text)
+        pii = bool(f.get("pii", False))
+        # Privacy defense-in-depth: if label asks for PII keywords, enforce pii=True
+        cleaned_lbl = re.sub(r"[\*\"\'\:\-]+", " ", label).strip().lower()
+        words = cleaned_lbl.split()
+        if any(k in words or k == cleaned_lbl for k in PII_KEYWORDS):
+            pii = True
 
-    n = max(len(boxes), len(labels), len(piis))
-    for i in range(n):
-        box = boxes[i] if i < len(boxes) else None
-        label = labels[i] if i < len(labels) else ""
-        pii = (piis[i] if i < len(piis) else "false").lower() == "true"
-        field = {"label": label, "pii": pii}
-        if box:
-            x1, y1, x2, y2 = map(float, box)
-            field["box"] = [x1, y1, x2, y2]
-            field["center"] = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+        field = {"type": ftype, "label": label, "pii": pii, "options": opts}
+        if "box" in f and len(f["box"]) == 4:
+            try:
+                x1, y1, x2, y2 = map(float, f["box"])
+                field["box"] = [x1, y1, x2, y2]
+                field["center"] = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+            except Exception:
+                pass
         fields.append(field)
 
     return fields
 
 
 def analyze_form(base64_image: str) -> list[dict]:
-    """Ask the VLM to enumerate the form's text fields.
+    """Ask the VLM to enumerate the form's fields.
 
-    Returns a list of dicts: {label, pii, box?, center?}. Fields whose box could
-    not be read lose the box keys; the caller can still fill by re-grounding.
+    Returns a list of dicts: {type, label, pii, options, box?, center?}.
     """
     try:
         img = decode_base64_image(base64_image)
@@ -485,7 +515,7 @@ def analyze_form(base64_image: str) -> list[dict]:
         return []
 
     try:
-        output = _run_vlm_inference(img, FORM_ANALYSIS_PROMPT, max_new_tokens=512)
+        output = _run_vlm_inference(img, FORM_ANALYSIS_PROMPT, max_new_tokens=1024)
     except (torch.AcceleratorError, RuntimeError) as vlm_err:
         print(f"[!] analyze_form inference failed ({vlm_err}).")
         return []
@@ -493,13 +523,22 @@ def analyze_form(base64_image: str) -> list[dict]:
     print(f"[*] FORM analysis raw: {output.strip()[:600]}")
     fields = _extract_fields_from_json(output)
     print(f"[*] FORM inferred {len(fields)} field(s): "
-          f"{json.dumps([{ 'label': f['label'], 'pii': f['pii'] } for f in fields])}")
+          f"{json.dumps([{ 'label': f['label'], 'type': f['type'], 'pii': f['pii'] } for f in fields])}")
     return fields
 
 
 def generate_form_value(label: str) -> str:
     """Return a realistic test value for a NON-PII field given its label."""
     L = (label or "").lower()
+
+    # 1. Check if the label explicitly tells the user what to type (e.g. just type "yes")
+    m = re.search(r'(?:type|enter|input|write)\s+["\']([^"\']+)["\']', label, re.IGNORECASE)
+    if m:
+        return m.group(1)
+
+    m_quoted = re.search(r'["\']([^"\']+)["\']', label)
+    if m_quoted and any(w in L for w in ["type", "enter", "write", "say", "just"]):
+        return m_quoted.group(1)
 
     if any(k in L for k in ["subject", "query", "search", "keyword", "topic"]):
         return "Project Vision automation test"
@@ -521,19 +560,40 @@ def generate_form_value(label: str) -> str:
 
 
 def build_form_fill_plan(form_fields: list[dict]) -> list[str]:
-    """Turn detected fields into click+type step strings for NON-PII fields only.
+    """Turn detected fields into click+type/click step strings for NON-PII fields only.
 
     PII/redacted fields are intentionally skipped (the human types those).
+    Radio/checkbox fields get a click on the first available option.
     """
     steps: list[str] = []
     for i, f in enumerate(form_fields, start=1):
+        raw_label = (f.get("label") or f"field {i}").strip()
+        clean_lbl = raw_label.rstrip("*").strip()
+
         if f.get("pii"):
-            print(f"[*] Skipping PII/redacted field ({i}): {f.get('label','')}")
+            print(f"[*] Skipping PII/redacted field ({i}): {raw_label}")
             continue
-        label = (f.get("label") or f"field {i}").strip() or f"field {i}"
-        value = generate_form_value(label)
-        steps.append(f"click: {label}")
-        steps.append(f"type: {value}")
+
+        ftype = (f.get("type") or "text").lower()
+        opts = f.get("options") or []
+
+        # Auto-correct type if options exist
+        if opts and ftype == "text":
+            ftype = "checkbox" if any(w in clean_lbl.lower() for w in ["tick", "check", "multi"]) else "radio"
+
+        if ftype in ("radio", "checkbox"):
+            # For radio/checkbox, click the first option (e.g., "Yes" or "True")
+            if opts:
+                option_label = opts[0]
+                steps.append(f"click: {clean_lbl} - {option_label}")
+            else:
+                steps.append(f"click: {clean_lbl}")
+        else:
+            # Text/textarea: click the input box then type
+            value = generate_form_value(clean_lbl)
+            steps.append(f"click: input field for {clean_lbl}")
+            steps.append(f"type: {value}")
+
     if not steps:
         print(f"[*] All {len(form_fields)} form fields are PII/redacted; nothing to auto-fill.")
     return steps
