@@ -1,16 +1,27 @@
 "use strict";
 (() => {
     const globalState = globalThis;
+    /*
+     * Prevent duplicate content-script installation.
+     *
+     * Chrome can inject/reinject content scripts during navigation,
+     * SPA route changes, extension reloads, etc.
+     */
     if (globalState.__projectVisionContentScriptLoaded) {
         return;
     }
     globalState.__projectVisionContentScriptLoaded = true;
-    /* -------------------------------------------------------------------------- */
-    /*                                BASIC HELPERS                               */
-    /* -------------------------------------------------------------------------- */
+    // ---------------------------------------------------------------------------
+    // General utilities
+    // ---------------------------------------------------------------------------
     function isFiniteNumber(value) {
         return (typeof value === "number" &&
             Number.isFinite(value));
+    }
+    function sleep(ms) {
+        return new Promise(resolve => {
+            window.setTimeout(resolve, ms);
+        });
     }
     function safeFocus(element) {
         try {
@@ -23,50 +34,12 @@
                 element.focus();
             }
             catch {
-                // Some browser-internal/custom elements can reject focus.
+                // Ignore focus failures.
             }
         }
     }
-    function isElementDisabled(element) {
-        if (element instanceof HTMLButtonElement &&
-            element.disabled) {
-            return true;
-        }
-        if (element instanceof HTMLInputElement &&
-            element.disabled) {
-            return true;
-        }
-        if (element instanceof HTMLTextAreaElement &&
-            element.disabled) {
-            return true;
-        }
-        if (element instanceof HTMLSelectElement &&
-            element.disabled) {
-            return true;
-        }
-        if (element instanceof HTMLOptGroupElement &&
-            element.disabled) {
-            return true;
-        }
-        if (element.hasAttribute("disabled")) {
-            return true;
-        }
-        if (element.getAttribute("aria-disabled") === "true") {
-            return true;
-        }
-        /*
-         * A disabled fieldset disables its descendants except
-         * descendants inside the fieldset's first legend.
-         */
-        const disabledFieldset = element.closest("fieldset[disabled]");
-        if (disabledFieldset instanceof HTMLFieldSetElement) {
-            const firstLegend = disabledFieldset.querySelector(":scope > legend");
-            if (!(firstLegend instanceof HTMLElement) ||
-                !firstLegend.contains(element)) {
-                return true;
-            }
-        }
-        return false;
+    function isConnected(element) {
+        return element.isConnected;
     }
     function isVisible(element) {
         if (!element.isConnected) {
@@ -85,88 +58,62 @@
             rect.height <= 0) {
             return false;
         }
-        /*
-         * Hidden ancestors are already handled by the browser's
-         * computed style in most cases, but checking the chain makes
-         * behavior more reliable on unusual sites.
-         */
-        let current = element;
-        while (current && current !== document.documentElement) {
-            const currentStyle = window.getComputedStyle(current);
-            if (currentStyle.display === "none" ||
-                currentStyle.visibility === "hidden" ||
-                currentStyle.visibility === "collapse") {
-                return false;
-            }
-            current = current.parentElement;
-        }
         return true;
     }
-    function isPointInViewport(x, y) {
+    function isDisabled(element) {
+        if (element instanceof HTMLButtonElement &&
+            element.disabled) {
+            return true;
+        }
+        if (element instanceof HTMLInputElement &&
+            element.disabled) {
+            return true;
+        }
+        if (element instanceof HTMLTextAreaElement &&
+            element.disabled) {
+            return true;
+        }
+        if (element instanceof HTMLSelectElement &&
+            element.disabled) {
+            return true;
+        }
+        if (element.hasAttribute("disabled")) {
+            return true;
+        }
+        const ariaDisabled = element.getAttribute("aria-disabled");
+        if (ariaDisabled?.toLowerCase() === "true") {
+            return true;
+        }
+        return false;
+    }
+    function isPointInsideViewport(x, y) {
         return (x >= 0 &&
             y >= 0 &&
             x < window.innerWidth &&
             y < window.innerHeight);
     }
-    /* -------------------------------------------------------------------------- */
-    /*                              SHADOW DOM SUPPORT                            */
-    /* -------------------------------------------------------------------------- */
-    /*
-     * Explicit return type is important here.
-     *
-     * Without it, TypeScript can sometimes infer recursive Shadow DOM
-     * expressions as `any`, resulting in TS7022.
-     */
-    function getElementInsideShadowRoot(root, x, y) {
-        let current = root.elementFromPoint(x, y);
-        /*
-         * Walk through nested open shadow roots.
-         */
-        while (current instanceof HTMLElement ||
-            current instanceof SVGElement) {
-            const host = current;
-            const shadowRoot = host instanceof HTMLElement
-                ? host.shadowRoot
-                : null;
-            if (!shadowRoot) {
-                break;
-            }
-            const shadowElement = shadowRoot.elementFromPoint(x, y);
-            if (!shadowElement ||
-                shadowElement === current) {
-                break;
-            }
-            current = shadowElement;
-        }
-        return current;
-    }
+    // ---------------------------------------------------------------------------
+    // Shadow DOM / coordinate handling
+    // ---------------------------------------------------------------------------
     function getElementAtPoint(x, y) {
         if (!isFiniteNumber(x) ||
             !isFiniteNumber(y)) {
             return null;
         }
-        if (!isPointInViewport(x, y)) {
+        if (!isPointInsideViewport(x, y)) {
             return null;
         }
         let element = document.elementFromPoint(x, y);
-        if (!element) {
-            return null;
-        }
         /*
-         * Descend through nested open Shadow DOM trees.
+         * Walk through open Shadow DOM roots.
          *
-         * This is deliberately iterative rather than recursively
-         * calling getElementAtPoint().
+         * Explicit annotations here are important because TypeScript can otherwise
+         * produce TS7022 in recursive/nested ShadowRoot inference.
          */
-        for (let depth = 0; depth < 20; depth++) {
-            if (!(element instanceof HTMLElement)) {
-                break;
-            }
+        while (element instanceof HTMLElement &&
+            element.shadowRoot instanceof ShadowRoot) {
             const shadowRoot = element.shadowRoot;
-            if (!shadowRoot) {
-                break;
-            }
-            const shadowElement = getElementInsideShadowRoot(shadowRoot, x, y);
+            const shadowElement = shadowRoot.elementFromPoint(x, y);
             if (!shadowElement ||
                 shadowElement === element) {
                 break;
@@ -175,23 +122,32 @@
         }
         return element;
     }
-    /* -------------------------------------------------------------------------- */
-    /*                             ELEMENT DISCOVERY                              */
-    /* -------------------------------------------------------------------------- */
-    function getParentElement(element) {
-        if (element.parentElement) {
-            return element.parentElement;
+    function getDeepActiveElement() {
+        let active = document.activeElement;
+        while (active instanceof HTMLElement &&
+            active.shadowRoot instanceof ShadowRoot) {
+            const shadowRoot = active.shadowRoot;
+            const shadowActive = shadowRoot.activeElement;
+            if (!shadowActive) {
+                break;
+            }
+            active = shadowActive;
         }
-        /*
-         * If we are inside Shadow DOM, parentElement becomes null at
-         * the shadow root boundary. Recover the host.
-         */
-        const root = element.getRootNode();
-        if (root instanceof ShadowRoot) {
-            return root.host;
-        }
-        return null;
+        return active;
     }
+    function pointIsInsideElement(element, x, y) {
+        if (!element.isConnected) {
+            return false;
+        }
+        const rect = element.getBoundingClientRect();
+        return (x >= rect.left &&
+            x <= rect.right &&
+            y >= rect.top &&
+            y <= rect.bottom);
+    }
+    // ---------------------------------------------------------------------------
+    // Clickable element detection
+    // ---------------------------------------------------------------------------
     function isClickableElement(element) {
         const tag = element.tagName.toLowerCase();
         if (tag === "button" ||
@@ -201,7 +157,7 @@
             tag === "summary") {
             return true;
         }
-        const role = element.getAttribute("role");
+        const role = element.getAttribute("role")?.toLowerCase();
         if (role === "button" ||
             role === "link" ||
             role === "checkbox" ||
@@ -214,20 +170,27 @@
             role === "menuitemradio") {
             return true;
         }
-        if (element.hasAttribute("onclick")) {
-            return true;
-        }
-        if (element.hasAttribute("tabindex") &&
-            element.getAttribute("tabindex") !== "-1") {
+        if (element.hasAttribute("onclick") ||
+            element.hasAttribute("ng-click") ||
+            element.hasAttribute("@click") ||
+            element.hasAttribute("v-on:click")) {
             return true;
         }
         /*
-         * Elements commonly used as custom controls.
+         * Do not treat every tabindex as clickable.
+         *
+         * tabindex is often used for focus management and treating every
+         * focusable element as a button caused false-positive clicks.
          */
-        if (element.hasAttribute("data-testid") &&
-            (element.hasAttribute("aria-label") ||
-                element.hasAttribute("aria-labelledby"))) {
-            return true;
+        if (element.hasAttribute("tabindex") &&
+            element.getAttribute("tabindex") !== "-1") {
+            const roleAttribute = element.getAttribute("role");
+            if (roleAttribute === "button" ||
+                roleAttribute === "link" ||
+                roleAttribute === "tab" ||
+                roleAttribute === "option") {
+                return true;
+            }
         }
         return false;
     }
@@ -236,38 +199,37 @@
             return null;
         }
         let current = element;
-        /*
-         * Walk up through normal DOM and Shadow DOM boundaries.
-         */
-        for (let depth = 0; current && depth < 100; depth++) {
+        while (current) {
             if (current instanceof HTMLElement &&
                 isClickableElement(current)) {
                 return current;
             }
             current =
-                getParentElement(current);
+                current.parentElement;
         }
         return null;
     }
-    function pointIsInsideElement(element, x, y) {
-        const rect = element.getBoundingClientRect();
-        return (x >= rect.left &&
-            x <= rect.right &&
-            y >= rect.top &&
-            y <= rect.bottom);
-    }
-    function getTopmostClickableAtPoint(x, y) {
-        const actual = getElementAtPoint(x, y);
-        if (!actual) {
+    /*
+     * Find the nearest useful interactive ancestor without blindly promoting
+     * arbitrary containers.
+     */
+    function findInteractiveAncestor(element) {
+        if (!element) {
             return null;
         }
-        return findClickableElement(actual);
-    }
-    function verifyClickTarget(element, x, y) {
-        if (!element.isConnected) {
-            return false;
+        if (element instanceof HTMLElement &&
+            isClickableElement(element)) {
+            return element;
         }
-        if (!isVisible(element)) {
+        return findClickableElement(element);
+    }
+    // ---------------------------------------------------------------------------
+    // Click verification
+    // ---------------------------------------------------------------------------
+    function verifyClickTarget(element, x, y) {
+        if (!element.isConnected ||
+            !isVisible(element) ||
+            isDisabled(element)) {
             return false;
         }
         if (!pointIsInsideElement(element, x, y)) {
@@ -277,35 +239,29 @@
         if (!actual) {
             return false;
         }
-        const actualClickable = findClickableElement(actual);
         /*
-         * Normal case.
+         * The actual topmost element must belong to the intended target.
+         *
+         * This intentionally avoids the overly-permissive:
+         *
+         *   element.contains(actual)
+         *
+         * by itself.
          */
-        if (actualClickable === element) {
+        if (actual === element) {
             return true;
         }
-        /*
-         * If the coordinate landed on a child of the intended
-         * clickable, it is still valid.
-         */
         if (element.contains(actual)) {
             return true;
         }
-        /*
-         * Labels are special: clicking their child text should
-         * activate the associated control.
-         */
-        if (element instanceof HTMLLabelElement &&
-            element.contains(actual)) {
-            return true;
-        }
-        return false;
+        const actualClickable = findClickableElement(actual);
+        return (actualClickable === element);
     }
-    /* -------------------------------------------------------------------------- */
-    /*                                  CLICK                                     */
-    /* -------------------------------------------------------------------------- */
-    function createPointerEvent(type, x, y, buttons) {
-        return new PointerEvent(type, {
+    // ---------------------------------------------------------------------------
+    // Mouse / pointer event handling
+    // ---------------------------------------------------------------------------
+    function createMouseBase(x, y) {
+        return {
             bubbles: true,
             cancelable: true,
             composed: true,
@@ -316,92 +272,99 @@
             screenX: window.screenX + x,
             screenY: window.screenY + y,
             button: 0,
-            buttons,
-            pointerId: 1,
-            pointerType: "mouse",
-            isPrimary: true,
-        });
+        };
     }
-    function dispatchMouseClick(element, x, y) {
+    function dispatchPointerMouseClick(element, x, y) {
+        const base = createMouseBase(x, y);
+        /*
+         * Pointer events first.
+         *
+         * Some React/Vue/custom web components listen to pointer events rather
+         * than click.
+         */
         try {
-            element.dispatchEvent(createPointerEvent("pointerover", x, y, 0));
-            element.dispatchEvent(createPointerEvent("pointerenter", x, y, 0));
-            element.dispatchEvent(createPointerEvent("pointermove", x, y, 0));
-            const pointerDownAllowed = element.dispatchEvent(createPointerEvent("pointerdown", x, y, 1));
-            element.dispatchEvent(new MouseEvent("mouseover", {
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                view: window,
-                detail: 1,
-                clientX: x,
-                clientY: y,
-                screenX: window.screenX + x,
-                screenY: window.screenY + y,
-                button: 0,
+            element.dispatchEvent(new PointerEvent("pointerover", {
+                ...base,
+                pointerId: 1,
+                pointerType: "mouse",
+                isPrimary: true,
                 buttons: 0,
             }));
-            element.dispatchEvent(new MouseEvent("mousemove", {
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                view: window,
-                detail: 1,
-                clientX: x,
-                clientY: y,
-                screenX: window.screenX + x,
-                screenY: window.screenY + y,
-                button: 0,
+            element.dispatchEvent(new PointerEvent("pointerenter", {
+                ...base,
+                pointerId: 1,
+                pointerType: "mouse",
+                isPrimary: true,
+                buttons: 0,
+            }));
+            element.dispatchEvent(new PointerEvent("pointermove", {
+                ...base,
+                pointerId: 1,
+                pointerType: "mouse",
+                isPrimary: true,
+                buttons: 0,
+            }));
+            element.dispatchEvent(new PointerEvent("pointerdown", {
+                ...base,
+                pointerId: 1,
+                pointerType: "mouse",
+                isPrimary: true,
                 buttons: 1,
             }));
-            const mouseDownAllowed = element.dispatchEvent(new MouseEvent("mousedown", {
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                view: window,
-                detail: 1,
-                clientX: x,
-                clientY: y,
-                screenX: window.screenX + x,
-                screenY: window.screenY + y,
-                button: 0,
-                buttons: 1,
-            }));
-            element.dispatchEvent(createPointerEvent("pointerup", x, y, 0));
-            element.dispatchEvent(new MouseEvent("mouseup", {
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                view: window,
-                detail: 1,
-                clientX: x,
-                clientY: y,
-                screenX: window.screenX + x,
-                screenY: window.screenY + y,
-                button: 0,
-                buttons: 0,
-            }));
-            const clickAllowed = element.dispatchEvent(new MouseEvent("click", {
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                view: window,
-                detail: 1,
-                clientX: x,
-                clientY: y,
-                screenX: window.screenX + x,
-                screenY: window.screenY + y,
-                button: 0,
-                buttons: 0,
-            }));
-            return (pointerDownAllowed &&
-                mouseDownAllowed &&
-                clickAllowed);
         }
         catch {
-            return false;
+            // PointerEvent may be unavailable in unusual environments.
         }
+        /*
+         * Traditional mouse events.
+         */
+        element.dispatchEvent(new MouseEvent("mouseover", {
+            ...base,
+            buttons: 0,
+        }));
+        element.dispatchEvent(new MouseEvent("mousemove", {
+            ...base,
+            buttons: 1,
+        }));
+        element.dispatchEvent(new MouseEvent("mousedown", {
+            ...base,
+            buttons: 1,
+        }));
+        try {
+            element.dispatchEvent(new PointerEvent("pointerup", {
+                ...base,
+                pointerId: 1,
+                pointerType: "mouse",
+                isPrimary: true,
+                buttons: 0,
+            }));
+        }
+        catch {
+            // Ignore.
+        }
+        element.dispatchEvent(new MouseEvent("mouseup", {
+            ...base,
+            buttons: 0,
+        }));
+        element.dispatchEvent(new MouseEvent("click", {
+            ...base,
+            buttons: 0,
+        }));
     }
+    function shouldUseNativeClick(element) {
+        const tag = element.tagName.toLowerCase();
+        /*
+         * Native .click() is preferable for real HTML controls.
+         */
+        return (tag === "button" ||
+            tag === "a" ||
+            tag === "input" ||
+            tag === "select" ||
+            tag === "summary");
+    }
+    // ---------------------------------------------------------------------------
+    // CLICK
+    // ---------------------------------------------------------------------------
     function clickAt(x, y) {
         if (!isFiniteNumber(x) ||
             !isFiniteNumber(y)) {
@@ -410,7 +373,7 @@
                 error: "Click requires valid numeric x and y coordinates",
             };
         }
-        if (!isPointInViewport(x, y)) {
+        if (!isPointInsideViewport(x, y)) {
             return {
                 success: false,
                 error: `Coordinates (${x}, ${y}) are outside the ` +
@@ -424,26 +387,20 @@
                 error: `No element found at (${x}, ${y})`,
             };
         }
-        /*
-         * If the coordinate lands on an iframe itself, we cannot
-         * automatically enter a cross-origin iframe from this
-         * document. The background/content-script architecture must
-         * have a content script running inside that frame.
-         */
-        if (element instanceof HTMLIFrameElement) {
-            return {
-                success: false,
-                error: "Coordinates point to an iframe. The target must be handled by the content script running inside that frame.",
-            };
-        }
-        const clickable = findClickableElement(element);
+        const clickable = findInteractiveAncestor(element);
         if (!clickable) {
             return {
                 success: false,
                 error: `Element at (${x}, ${y}) is not clickable`,
             };
         }
-        if (isElementDisabled(clickable)) {
+        if (!clickable.isConnected) {
+            return {
+                success: false,
+                error: "Target element was removed from the page",
+            };
+        }
+        if (isDisabled(clickable)) {
             return {
                 success: false,
                 error: "Target element is disabled",
@@ -455,53 +412,59 @@
                 error: "Target element is not visible",
             };
         }
+        /*
+         * Re-check the target immediately before interaction.
+         *
+         * This matters heavily on Google, Amazon, React apps, SPAs, etc. where
+         * the DOM can change between screenshot capture and action execution.
+         */
         if (!verifyClickTarget(clickable, x, y)) {
             /*
-             * Some websites place transparent overlays over controls
-             * during animations. Give the coordinate one final lookup
-             * rather than blindly clicking a stale element.
+             * Try resolving the target one final time.
              */
-            const latest = getTopmostClickableAtPoint(x, y);
-            if (!latest ||
-                latest !== clickable) {
+            const refreshed = getElementAtPoint(x, y);
+            const refreshedClickable = findInteractiveAncestor(refreshed);
+            if (!refreshedClickable ||
+                refreshedClickable !== clickable ||
+                !verifyClickTarget(refreshedClickable, x, y)) {
                 return {
                     success: false,
-                    error: "Target moved or is covered by another element",
+                    error: "Target moved or is no longer at the requested coordinates",
                 };
             }
         }
         safeFocus(clickable);
-        /*
-         * Native controls should use the browser's native activation
-         * whenever possible. This is much more reliable than manually
-         * recreating every browser event.
-         */
         try {
-            clickable.click();
+            if (shouldUseNativeClick(clickable)) {
+                clickable.click();
+            }
+            else {
+                dispatchPointerMouseClick(clickable, x, y);
+            }
+            /*
+             * Remember the action only for diagnostics/re-entry protection.
+             * This does NOT suppress legitimate future clicks indefinitely.
+             */
+            globalState.__projectVisionLastAction = {
+                signature: `click:${Math.round(x)}:${Math.round(y)}`,
+                time: Date.now(),
+            };
             return {
                 success: true,
             };
         }
-        catch {
-            /*
-             * Some custom elements can throw from `.click()`.
-             * Fall back to a complete mouse/pointer sequence.
-             */
-            const dispatched = dispatchMouseClick(clickable, x, y);
-            if (dispatched) {
-                return {
-                    success: true,
-                };
-            }
+        catch (error) {
             return {
                 success: false,
-                error: "Unable to activate the target element",
+                error: error instanceof Error
+                    ? `Click failed: ${error.message}`
+                    : `Click failed: ${String(error)}`,
             };
         }
     }
-    /* -------------------------------------------------------------------------- */
-    /*                              TEXT INPUTS                                  */
-    /* -------------------------------------------------------------------------- */
+    // ---------------------------------------------------------------------------
+    // TEXT INPUT
+    // ---------------------------------------------------------------------------
     function isTextInput(element) {
         if (element instanceof HTMLTextAreaElement) {
             return true;
@@ -516,187 +479,97 @@
                 type !== "reset" &&
                 type !== "file" &&
                 type !== "range" &&
-                type !== "color" &&
-                type !== "image");
+                type !== "color");
         }
         return false;
     }
     function isContentEditable(element) {
-        if (!(element instanceof HTMLElement)) {
-            return false;
-        }
-        return (element.isContentEditable ||
-            element.getAttribute("contenteditable") === "true" ||
-            element.getAttribute("contenteditable") === "plaintext-only");
-    }
-    function hasTextboxRole(element) {
-        if (!(element instanceof HTMLElement)) {
-            return false;
-        }
-        const role = element.getAttribute("role");
-        return (role === "textbox" ||
-            role === "searchbox");
-    }
-    function isSupportedTextInput(element) {
-        return (isTextInput(element) ||
-            isContentEditable(element) ||
-            hasTextboxRole(element));
+        return (element instanceof HTMLElement &&
+            element.isContentEditable);
     }
     function findTextInputAtPoint(x, y) {
         const element = getElementAtPoint(x, y);
         if (!element) {
             return null;
         }
-        if (isSupportedTextInput(element)) {
+        if (isTextInput(element) ||
+            isContentEditable(element)) {
             return element;
         }
-        /*
-         * Walk upward through Shadow DOM and normal DOM.
-         */
-        let current = element;
-        for (let depth = 0; current && depth < 100; depth++) {
-            if (current instanceof HTMLElement &&
-                isSupportedTextInput(current)) {
-                return current;
-            }
-            current =
-                getParentElement(current);
+        const directParent = element.parentElement;
+        if (directParent &&
+            (isTextInput(directParent) ||
+                isContentEditable(directParent))) {
+            return directParent;
         }
-        /*
-         * Search common wrapper structures.
-         */
-        if (element instanceof HTMLElement) {
-            const closestInput = element.closest("textarea, input, [contenteditable='true'], [contenteditable='plaintext-only'], [role='textbox'], [role='searchbox']");
-            if (closestInput instanceof HTMLElement &&
-                isSupportedTextInput(closestInput)) {
-                return closestInput;
-            }
+        const editable = element.closest([
+            "textarea",
+            "input",
+            "[contenteditable='true']",
+            "[contenteditable='plaintext-only']",
+            "[role='textbox']"
+        ].join(","));
+        if (editable instanceof HTMLElement &&
+            (isTextInput(editable) ||
+                isContentEditable(editable) ||
+                editable.getAttribute("role") === "textbox")) {
+            return editable;
         }
         return null;
     }
     function findFocusedTextInput() {
-        const active = document.activeElement;
+        const active = getDeepActiveElement();
+        if (isTextInput(active) ||
+            isContentEditable(active)) {
+            return active;
+        }
         if (active instanceof HTMLElement &&
-            isSupportedTextInput(active)) {
+            active.getAttribute("role") === "textbox") {
             return active;
         }
         return null;
     }
-    function getNativeValueSetter(element) {
+    function findFallbackTextInput() {
+        const selectors = [
+            "textarea",
+            "input[type='search']",
+            "input[type='text']",
+            "input[type='email']",
+            "input[type='url']",
+            "input[type='tel']",
+            "input[type='number']",
+            "input[type='password']",
+            "input:not([type])",
+            "[contenteditable='true']",
+            "[contenteditable='plaintext-only']",
+            "[role='textbox']"
+        ];
+        for (const selector of selectors) {
+            const elements = Array.from(document.querySelectorAll(selector));
+            for (const element of elements) {
+                if (isVisible(element) &&
+                    !isDisabled(element)) {
+                    return element;
+                }
+            }
+        }
+        return null;
+    }
+    function setInputValue(element, text) {
         const prototype = element instanceof HTMLTextAreaElement
             ? HTMLTextAreaElement.prototype
             : HTMLInputElement.prototype;
         const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
-        if (descriptor &&
-            typeof descriptor.set === "function") {
-            return descriptor.set.bind(element);
-        }
-        return null;
-    }
-    function dispatchInputEvents(element, text, previousValue) {
-        /*
-         * beforeinput
-         */
-        try {
-            element.dispatchEvent(new InputEvent("beforeinput", {
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                inputType: "insertText",
-                data: text,
-            }));
-        }
-        catch {
-            // Older browsers.
-        }
-        /*
-         * input
-         */
-        try {
-            element.dispatchEvent(new InputEvent("input", {
-                bubbles: true,
-                cancelable: false,
-                composed: true,
-                inputType: "insertText",
-                data: text,
-            }));
-        }
-        catch {
-            element.dispatchEvent(new Event("input", {
-                bubbles: true,
-                composed: true,
-            }));
-        }
-        /*
-         * change
-         */
-        try {
-            element.dispatchEvent(new Event("change", {
-                bubbles: true,
-                composed: true,
-            }));
-        }
-        catch {
-            // Ignore sites with unusual event implementations.
-        }
-        /*
-         * React/Vue/etc. occasionally inspect the actual DOM value
-         * immediately after the input event. Reading it here also
-         * ensures the browser has accepted the update.
-         */
-        void previousValue;
-    }
-    function setNativeInputValue(element, text) {
-        const previousValue = element.value;
-        const setter = getNativeValueSetter(element);
+        const setter = descriptor?.set;
         if (setter) {
-            setter(text);
+            setter.call(element, text);
         }
         else {
             element.value = text;
         }
         /*
-         * Some frameworks track value changes using an internal
-         * value tracker. Clear/update it when available.
+         * React and other controlled frameworks listen to input/change.
          */
-        const trackerHost = element;
-        try {
-            trackerHost._valueTracker?.setValue?.(previousValue);
-        }
-        catch {
-            // Not all frameworks expose this.
-        }
-        /*
-         * Restore the desired value after tracker manipulation.
-         */
-        if (element.value !== text) {
-            if (setter) {
-                setter(text);
-            }
-            else {
-                element.value = text;
-            }
-        }
-        dispatchInputEvents(element, text, previousValue);
-    }
-    function setContentEditableValue(element, text) {
-        safeFocus(element);
-        /*
-         * Select the existing content so browser/framework selection
-         * state matches what a user would normally see.
-         */
-        try {
-            const selection = window.getSelection();
-            if (selection) {
-                const range = document.createRange();
-                range.selectNodeContents(element);
-                selection.removeAllRanges();
-                selection.addRange(range);
-            }
-        }
-        catch {
-            // Selection APIs may fail on unusual custom elements.
-        }
         try {
             element.dispatchEvent(new InputEvent("beforeinput", {
                 bubbles: true,
@@ -707,14 +580,8 @@
             }));
         }
         catch {
-            // Ignore.
+            // Older browsers may not support InputEvent constructor.
         }
-        /*
-         * Prefer textContent for predictable plain-text behavior.
-         * This is particularly useful for Google-style contenteditable
-         * fields and custom textbox implementations.
-         */
-        element.textContent = text;
         try {
             element.dispatchEvent(new InputEvent("input", {
                 bubbles: true,
@@ -730,15 +597,84 @@
                 composed: true,
             }));
         }
+        element.dispatchEvent(new Event("change", {
+            bubbles: true,
+            composed: true,
+        }));
+    }
+    function setContentEditableValue(element, text) {
+        safeFocus(element);
+        const selection = window.getSelection();
+        if (selection) {
+            try {
+                const range = document.createRange();
+                range.selectNodeContents(element);
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }
+            catch {
+                // Ignore selection errors.
+            }
+        }
+        /*
+         * beforeinput first.
+         */
         try {
-            element.dispatchEvent(new Event("change", {
+            const beforeInput = new InputEvent("beforeinput", {
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                inputType: "insertText",
+                data: text,
+            });
+            const allowed = element.dispatchEvent(beforeInput);
+            if (!allowed) {
+                return;
+            }
+        }
+        catch {
+            // Continue.
+        }
+        /*
+         * Use execCommand when available.
+         *
+         * This is deprecated, but remains useful for contenteditable editors
+         * because many rich editors react better to editing commands than direct
+         * textContent manipulation.
+         */
+        let inserted = false;
+        try {
+            if (typeof document.execCommand ===
+                "function") {
+                inserted =
+                    document.execCommand("insertText", false, text);
+            }
+        }
+        catch {
+            inserted = false;
+        }
+        if (!inserted) {
+            element.textContent = text;
+        }
+        try {
+            element.dispatchEvent(new InputEvent("input", {
+                bubbles: true,
+                cancelable: false,
+                composed: true,
+                inputType: "insertText",
+                data: text,
+            }));
+        }
+        catch {
+            element.dispatchEvent(new Event("input", {
                 bubbles: true,
                 composed: true,
             }));
         }
-        catch {
-            // Ignore.
-        }
+        element.dispatchEvent(new Event("change", {
+            bubbles: true,
+            composed: true,
+        }));
     }
     function typeIntoElement(text, x, y) {
         if (typeof text !== "string") {
@@ -750,14 +686,6 @@
         let element = null;
         const coordinatesProvided = x !== undefined ||
             y !== undefined;
-        /*
-         * IMPORTANT:
-         * If coordinates are supplied, they take priority.
-         *
-         * This prevents the agent from accidentally typing into
-         * whatever happened to be focused when it intended to target
-         * a specific field.
-         */
         if (coordinatesProvided) {
             if (!isFiniteNumber(x) ||
                 !isFiniteNumber(y)) {
@@ -766,34 +694,31 @@
                     error: "Type coordinates must both be valid numbers",
                 };
             }
-            if (!isPointInViewport(x, y)) {
-                return {
-                    success: false,
-                    error: `Type coordinates (${x}, ${y}) are outside the ` +
-                        `current viewport (${window.innerWidth}x${window.innerHeight})`,
-                };
-            }
             element =
                 findTextInputAtPoint(x, y);
+            /*
+             * Do not immediately fall back to some random page input if the
+             * coordinates were supplied. That can cause typing into the wrong field.
+             */
             if (!element) {
-                const target = getElementAtPoint(x, y);
-                const tag = target instanceof HTMLElement ||
-                    target instanceof SVGElement
-                    ? target.tagName.toLowerCase()
-                    : "unknown";
                 return {
                     success: false,
-                    error: `Coordinates (${x}, ${y}) point to ${tag}, not a supported text input`,
+                    error: `Coordinates (${x}, ${y}) do not point to a supported text input`,
                 };
             }
         }
-        /*
-         * If no coordinates were supplied, use the currently focused
-         * input.
-         */
         if (!element) {
             element =
                 findFocusedTextInput();
+        }
+        /*
+         * Only use a fallback input when no explicit coordinates were supplied
+         * and there is no focused field.
+         */
+        if (!element &&
+            !coordinatesProvided) {
+            element =
+                findFallbackTextInput();
         }
         if (!element) {
             return {
@@ -801,7 +726,13 @@
                 error: "No text input found. Provide x/y coordinates or focus an input first.",
             };
         }
-        if (isElementDisabled(element)) {
+        if (!element.isConnected) {
+            return {
+                success: false,
+                error: "Target text input is no longer connected to the page",
+            };
+        }
+        if (isDisabled(element)) {
             return {
                 success: false,
                 error: "Target text input is disabled",
@@ -814,39 +745,37 @@
             };
         }
         safeFocus(element);
-        if (element instanceof HTMLInputElement ||
-            element instanceof HTMLTextAreaElement) {
-            /*
-             * Avoid attempting to set values on read-only fields.
-             */
-            if (element.readOnly) {
+        try {
+            if (element instanceof HTMLInputElement ||
+                element instanceof HTMLTextAreaElement) {
+                setInputValue(element, text);
                 return {
-                    success: false,
-                    error: "Target text input is read-only",
+                    success: true,
                 };
             }
-            setNativeInputValue(element, text);
-            return {
-                success: true,
-            };
+            if (element.isContentEditable) {
+                setContentEditableValue(element, text);
+                return {
+                    success: true,
+                };
+            }
+            /*
+             * ARIA textbox fallback.
+             */
+            if (element.getAttribute("role") ===
+                "textbox") {
+                setContentEditableValue(element, text);
+                return {
+                    success: true,
+                };
+            }
         }
-        if (isContentEditable(element) ||
-            hasTextboxRole(element)) {
-            /*
-             * Do not block role=textbox implementations merely because
-             * they are not technically contenteditable. Many web apps
-             * use custom textbox controls with their own input handling.
-             */
-            if (!isContentEditable(element) &&
-                !hasTextboxRole(element)) {
-                return {
-                    success: false,
-                    error: "Target element is not a supported editable control",
-                };
-            }
-            setContentEditableValue(element, text);
+        catch (error) {
             return {
-                success: true,
+                success: false,
+                error: error instanceof Error
+                    ? `Typing failed: ${error.message}`
+                    : `Typing failed: ${String(error)}`,
             };
         }
         return {
@@ -854,9 +783,9 @@
             error: "Target element is not a supported text input",
         };
     }
-    /* -------------------------------------------------------------------------- */
-    /*                                KEYBOARD                                    */
-    /* -------------------------------------------------------------------------- */
+    // ---------------------------------------------------------------------------
+    // KEYBOARD
+    // ---------------------------------------------------------------------------
     const KEY_ALIASES = {
         esc: "Escape",
         escape: "Escape",
@@ -880,26 +809,11 @@
         end: "End",
         pageup: "PageUp",
         pagedown: "PageDown",
-        insert: "Insert",
-        escape_key: "Escape",
-        ctrl: "Control",
-        control: "Control",
-        alt: "Alt",
-        shift: "Shift",
-        meta: "Meta",
-        command: "Meta",
-        cmd: "Meta",
-        back: "BrowserBack",
-        forward: "BrowserForward",
     };
     function normalizeKey(key) {
-        const trimmed = key.trim();
-        if (!trimmed) {
-            return "";
-        }
-        const normalized = trimmed.toLowerCase();
+        const normalized = key.trim().toLowerCase();
         return (KEY_ALIASES[normalized] ??
-            trimmed);
+            key);
     }
     function keyCodeFor(key) {
         if (key.length === 1) {
@@ -924,14 +838,7 @@
             End: "End",
             PageUp: "PageUp",
             PageDown: "PageDown",
-            Insert: "Insert",
             " ": "Space",
-            Shift: "ShiftLeft",
-            Control: "ControlLeft",
-            Alt: "AltLeft",
-            Meta: "MetaLeft",
-            BrowserBack: "BrowserBack",
-            BrowserForward: "BrowserForward",
         };
         return map[key] ?? key;
     }
@@ -945,27 +852,20 @@
             "summary",
             "details",
             "[contenteditable='true']",
-            "[contenteditable='plaintext-only']",
-            "[role='button']",
-            "[role='link']",
-            "[role='checkbox']",
-            "[role='radio']",
-            "[role='switch']",
-            "[role='tab']",
-            "[role='option']",
-            "[role='textbox']",
-            "[tabindex]:not([tabindex='-1'])",
+            "[tabindex]:not([tabindex='-1'])"
         ].join(",");
         return Array.from(document.querySelectorAll(selector)).filter(element => isVisible(element) &&
-            !isElementDisabled(element));
+            !isDisabled(element));
     }
     function moveFocus(backwards) {
         const elements = getFocusableElements();
         if (elements.length === 0) {
             return;
         }
-        const active = document.activeElement;
-        const currentIndex = elements.indexOf(active);
+        const active = getDeepActiveElement();
+        const currentIndex = active instanceof HTMLElement
+            ? elements.indexOf(active)
+            : -1;
         let nextIndex;
         if (currentIndex === -1) {
             nextIndex = backwards
@@ -984,10 +884,13 @@
                 nextIndex = 0;
             }
         }
-        safeFocus(elements[nextIndex]);
+        const next = elements[nextIndex];
+        if (next) {
+            safeFocus(next);
+        }
     }
     function activateEnterTarget(target) {
-        if (isElementDisabled(target)) {
+        if (isDisabled(target)) {
             return;
         }
         if (target instanceof HTMLButtonElement) {
@@ -998,8 +901,8 @@
             const type = target.type.toLowerCase();
             if (type === "submit" ||
                 type === "button" ||
-                type === "image" ||
-                type === "reset") {
+                type === "reset" ||
+                type === "image") {
                 target.click();
                 return;
             }
@@ -1008,63 +911,65 @@
             target.click();
             return;
         }
-        if (target instanceof HTMLLabelElement) {
-            target.click();
-            return;
-        }
-        const role = target.getAttribute("role");
+        const role = target.getAttribute("role")?.toLowerCase();
         if (role === "button" ||
             role === "link" ||
             role === "tab" ||
-            role === "option" ||
             role === "menuitem") {
+            const rect = target.getBoundingClientRect();
+            dispatchPointerMouseClick(target, rect.left +
+                rect.width / 2, rect.top +
+                rect.height / 2);
+            return;
+        }
+        /*
+         * Do not submit every form on Enter.
+         *
+         * Only submit if the active target actually belongs to a form.
+         */
+        const form = target.closest("form");
+        if (form) {
             try {
-                target.click();
-                return;
+                if (typeof form.requestSubmit ===
+                    "function") {
+                    form.requestSubmit();
+                }
+                else {
+                    form.submit();
+                }
             }
             catch {
-                const rect = target.getBoundingClientRect();
-                dispatchMouseClick(target, rect.left +
-                    rect.width / 2, rect.top +
-                    rect.height / 2);
-                return;
-            }
-        }
-        const form = target.closest("form");
-        if (form instanceof HTMLFormElement) {
-            if (typeof form.requestSubmit ===
-                "function") {
-                form.requestSubmit();
-            }
-            else {
-                form.submit();
+                // Ignore form submission errors.
             }
         }
     }
     function activateSpaceTarget(target) {
-        if (isElementDisabled(target)) {
+        if (isDisabled(target)) {
             return;
         }
-        if (target instanceof HTMLButtonElement ||
-            target instanceof HTMLInputElement) {
+        if (target instanceof HTMLButtonElement) {
             target.click();
             return;
         }
-        const role = target.getAttribute("role");
+        if (target instanceof HTMLInputElement) {
+            const type = target.type.toLowerCase();
+            if (type === "checkbox" ||
+                type === "radio" ||
+                type === "button" ||
+                type === "submit") {
+                target.click();
+                return;
+            }
+        }
+        const role = target.getAttribute("role")?.toLowerCase();
         if (role === "button" ||
             role === "checkbox" ||
             role === "radio" ||
-            role === "switch" ||
-            role === "tab") {
-            try {
-                target.click();
-            }
-            catch {
-                const rect = target.getBoundingClientRect();
-                dispatchMouseClick(target, rect.left +
-                    rect.width / 2, rect.top +
-                    rect.height / 2);
-            }
+            role === "switch") {
+            const rect = target.getBoundingClientRect();
+            dispatchPointerMouseClick(target, rect.left +
+                rect.width / 2, rect.top +
+                rect.height / 2);
         }
     }
     function pressKey(keyInput) {
@@ -1076,20 +981,14 @@
             };
         }
         const key = normalizeKey(keyInput);
-        if (!key) {
-            return {
-                success: false,
-                error: "Press action requires a valid key",
-            };
-        }
-        const active = document.activeElement;
-        const target = active instanceof HTMLElement
-            ? active
+        const target = getDeepActiveElement() instanceof HTMLElement
+            ? getDeepActiveElement()
             : document.body;
         const code = keyCodeFor(key);
         /*
-         * modifier state is derived from the actual active keyboard
-         * target where possible.
+         * Synthetic keyboard events do not reproduce every browser-native
+         * keyboard behavior. We therefore explicitly handle the important
+         * browser behaviors below.
          */
         const keydown = new KeyboardEvent("keydown", {
             key,
@@ -1098,57 +997,41 @@
             cancelable: true,
             composed: true,
             view: window,
-            ctrlKey: key === "Control",
-            altKey: key === "Alt",
-            shiftKey: key === "Shift",
-            metaKey: key === "Meta",
+            ctrlKey: false,
+            altKey: false,
+            shiftKey: false,
+            metaKey: false,
         });
         const keydownAllowed = target.dispatchEvent(keydown);
-        /*
-         * Some websites still depend on keypress for printable keys
-         * and Enter.
-         */
         if (key === "Enter" ||
-            key.length === 1 ||
-            key === " ") {
-            try {
-                target.dispatchEvent(new KeyboardEvent("keypress", {
-                    key,
-                    code,
-                    bubbles: true,
-                    cancelable: true,
-                    composed: true,
-                    view: window,
-                }));
-            }
-            catch {
-                // Ignore.
-            }
+            key.length === 1) {
+            target.dispatchEvent(new KeyboardEvent("keypress", {
+                key,
+                code,
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                view: window,
+            }));
         }
-        /*
-         * Synthetic KeyboardEvent does NOT cause the browser's native
-         * Tab behavior, so implement it ourselves.
-         */
         if (key === "Tab" &&
             keydownAllowed) {
             moveFocus(false);
         }
-        /*
-         * Synthetic Enter also does not automatically perform the
-         * browser's default button/form activation.
-         */
         if (key === "Enter" &&
             keydownAllowed) {
             activateEnterTarget(target);
         }
-        /*
-         * Space similarly needs explicit activation for custom
-         * controls.
-         */
         if (key === " " &&
             keydownAllowed) {
             activateSpaceTarget(target);
         }
+        /*
+         * Escape is intentionally left as an event.
+         *
+         * Modal/dropdown implementations generally listen for the event and
+         * perform their own close operation.
+         */
         target.dispatchEvent(new KeyboardEvent("keyup", {
             key,
             code,
@@ -1161,9 +1044,9 @@
             success: true,
         };
     }
-    /* -------------------------------------------------------------------------- */
-    /*                                  SCROLL                                    */
-    /* -------------------------------------------------------------------------- */
+    // ---------------------------------------------------------------------------
+    // SCROLL
+    // ---------------------------------------------------------------------------
     function scrollPage(direction, amount) {
         if (direction !== "up" &&
             direction !== "down") {
@@ -1179,11 +1062,7 @@
                 error: "Scroll amount must be a positive number",
             };
         }
-        /*
-         * Prevent pathological API payloads from causing enormous
-         * jumps or browser issues.
-         */
-        const distance = Math.min(Math.max(amount, 1), 5000);
+        const distance = Math.min(Math.max(Math.round(amount), 1), 5000);
         try {
             window.scrollBy({
                 left: 0,
@@ -1198,7 +1077,7 @@
         }
         catch {
             /*
-             * Fallback for unusual browser implementations.
+             * Fallback for unusual environments.
              */
             try {
                 window.scrollBy(0, direction === "down"
@@ -1213,21 +1092,21 @@
                     success: false,
                     error: error instanceof Error
                         ? error.message
-                        : "Unable to scroll page",
+                        : String(error),
                 };
             }
         }
     }
-    /* -------------------------------------------------------------------------- */
-    /*                              MESSAGE HANDLER                               */
-    /* -------------------------------------------------------------------------- */
+    // ---------------------------------------------------------------------------
+    // MESSAGE HANDLER
+    // ---------------------------------------------------------------------------
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (!message ||
             typeof message !== "object") {
             return;
         }
         /*
-         * Health check.
+         * Lightweight health check.
          */
         if (message.type === "PING") {
             sendResponse({
@@ -1235,9 +1114,6 @@
             });
             return;
         }
-        /*
-         * Ignore unrelated extension messages.
-         */
         if (message.type !==
             "AGENT_ACTION") {
             return;
@@ -1256,9 +1132,6 @@
         try {
             let result;
             switch (action.action) {
-                /*
-                 * These are the exact existing actions.
-                 */
                 case "click":
                     result =
                         clickAt(action.x, action.y);
@@ -1277,7 +1150,9 @@
                     break;
                 /*
                  * These remain background-service-worker actions.
-                 * Nothing new is being sent to the background here.
+                 *
+                 * Keeping them here is useful because it prevents accidental
+                 * execution if they ever get routed to the content script.
                  */
                 case "open_tab":
                 case "navigate":
