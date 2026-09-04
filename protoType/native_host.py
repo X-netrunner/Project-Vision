@@ -27,9 +27,9 @@ def find_server_app() -> Path:
         candidates.append(Path(explicit).expanduser().resolve())
     candidates.extend(
         [
-            PROJECT_ROOT / "varun" / "app.py",
-            PROJECT_ROOT / "app.py",
-            PROJECT_ROOT / "protoType" / "app.py",
+            PROJECT_ROOT / "protoType" / "varun" / "main.py",
+            PROJECT_ROOT / "main.py",
+            PROJECT_ROOT / "protoType" / "main.py",
         ]
     )
     for candidate in candidates:
