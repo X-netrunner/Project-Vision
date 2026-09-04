@@ -41,8 +41,7 @@ def find_pii_spans(text: str) -> List[Tuple[int, int]]:
 
     # 2. Regex Patterns
     for r in [EMAIL_REGEX, PHONE_REGEX, CARD_REGEX]:
-        m = r.search(text)
-        if m:
+        for m in r.finditer(text):
             spans.append((m.start(), m.end()))
 
     return spans
