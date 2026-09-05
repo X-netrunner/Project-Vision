@@ -23,7 +23,7 @@ SEP = "=" * 70
 
 # Increment this whenever the server's behavior changes meaningfully, so the
 # startup banner makes it obvious which build is running.
-SERVER_VERSION = "2.3.3"
+SERVER_VERSION = "2.3.4"
 
 # Maximum scroll-passes when scanning a form. Each pass analyzes the
 # current viewport, scrolls down, and repeats until the whole form is seen.
@@ -533,7 +533,7 @@ async def health_check():
 @app.get("/dashboard", response_class=HTMLResponse)
 @app.get("/admin", response_class=HTMLResponse)
 async def dashboard_page():
-    return HTMLResponse(DASHBOARD_HTML)
+    return HTMLResponse(DASHBOARD_HTML.replace("v2.3.1", f"v{SERVER_VERSION}"))
 
 
 @app.get("/connections")
@@ -813,6 +813,18 @@ async def websocket_endpoint(websocket: WebSocket):
                     if b_success:
                         if form_mode and form_stage == "scan":
                             pass
+                        elif form_mode and form_stage == "navigate":
+                            if b_step == last_confirmed_step + 1 and b_step < len(taskPlan):
+                                completed_steps.append(taskPlan[b_step])
+                                current_step_index = b_step + 1
+                                last_confirmed_step = b_step
+                                retry_count = 0
+                                ok(f"Navigation step {b_step + 1} confirmed success (bundled).")
+                            form_stage = "scan"
+                            form_scan_count = 0
+                            form_scroll_down_count = 0
+                            form_fields_all = []
+                            prev_scan_hash = ""
                         elif b_step == last_confirmed_step + 1 and b_step < len(taskPlan):
                             completed_steps.append(taskPlan[b_step])
                             current_step_index = b_step + 1
@@ -938,6 +950,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
 
                 if current_step_index >= len(taskPlan):
+                    if form_mode and form_stage in ("navigate", "scan"):
+                        # Navigation or scanning in progress; awaiting subsequent stage
+                        continue
                     ok("All planned steps executed successfully. Task complete.")
                     form_mode = False
                     form_stage = "navigate"
@@ -1040,6 +1055,17 @@ async def websocket_endpoint(websocket: WebSocket):
                 if success:
                     if form_mode and form_stage == "scan":
                         ok(f"Scan scroll pass executed successfully.")
+                    elif form_mode and form_stage == "navigate":
+                        completed_steps.append(taskPlan[step_idx])
+                        current_step_index = step_idx + 1
+                        last_confirmed_step = step_idx
+                        retry_count = 0
+                        ok(f"Navigation step {step_idx + 1} executed successfully. Awaiting loaded form screenshot to begin scan...")
+                        form_stage = "scan"
+                        form_scan_count = 0
+                        form_scroll_down_count = 0
+                        form_fields_all = []
+                        prev_scan_hash = ""
                     elif step_idx == last_confirmed_step + 1 and step_idx < len(taskPlan):
                         completed_steps.append(taskPlan[step_idx])
                         current_step_index = step_idx + 1
