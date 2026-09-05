@@ -10,14 +10,20 @@ import os
 import uuid
 import hashlib
 from planner import createPlan, replanTask
-from vlm import predict_action, reason_about_failure, analyze_form, build_form_fill_plan
+from vlm import (
+    predict_action,
+    reason_about_failure,
+    analyze_form,
+    build_form_fill_plan,
+    is_ignorable_form_element,
+)
 from logger_util import info, ok, warn, error, step as step_log, task as task_log, save_screenshot
 
 SEP = "=" * 70
 
 # Increment this whenever the server's behavior changes meaningfully, so the
 # startup banner makes it obvious which build is running.
-SERVER_VERSION = "2.3.0"
+SERVER_VERSION = "2.3.3"
 
 # Maximum scroll-passes when scanning a form. Each pass analyzes the
 # current viewport, scrolls down, and repeats until the whole form is seen.
@@ -301,7 +307,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="header">
     <h1>
       <span class="live-dot"></span> Project Vision &bull; Server Control Panel
-      <span class="badge badge-primary">v2.3.0</span>
+      <span class="badge badge-primary">v2.3.1</span>
     </h1>
     <div class="header-actions">
       <label style="font-size: 12px; color: #8b949e; display: flex; align-items: center; gap: 6px; cursor: pointer;">
@@ -684,6 +690,7 @@ async def websocket_endpoint(websocket: WebSocket):
     form_stage = "navigate"
     form_fields_all = []
     form_scan_count = 0
+    form_scroll_down_count = 0
     prev_scan_hash = ""
 
     try:
@@ -746,6 +753,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 current_step_index = 0
                 retry_count = 0
                 last_confirmed_step = -1
+                form_fields_all = []
+                form_scan_count = 0
+                form_scroll_down_count = 0
+                prev_scan_hash = ""
 
                 # Form-fill goals get a dedicated pipeline instead of the generic planner.
                 form_mode = is_form_goal(active_prompt)
@@ -825,6 +836,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     task_log("Navigate confirmed; starting form scan across viewports...")
                     form_stage = "scan"
                     form_scan_count = 0
+                    form_scroll_down_count = 0
                     form_fields_all = []
                     prev_scan_hash = ""
 
@@ -839,29 +851,58 @@ async def websocket_endpoint(websocket: WebSocket):
                     if form_scan_count < MAX_FORM_SCAN:
                         task_log(f"Running form analysis on viewport pass {form_scan_count + 1}/{MAX_FORM_SCAN}...")
                         fields = await asyncio.to_thread(analyze_form, last_screenshot)
-                        # Dedupe by normalized label (avoid re-adding same field from adjacent passes or asterisk differences)
+                        # Dedupe by normalized label and filter non-fillable elements
                         existing_labels = {normalize_label(x.get("label", "")) for x in form_fields_all}
                         for f in fields:
-                            nl = normalize_label(f.get("label", ""))
-                            if nl and nl not in existing_labels:
+                            raw_lbl = f.get("label", "")
+                            if is_ignorable_form_element(raw_lbl, f.get("type", "")):
+                                continue
+                            nl = normalize_label(raw_lbl)
+                            if not nl:
+                                continue
+                            if nl not in existing_labels:
                                 form_fields_all.append(f)
                                 existing_labels.add(nl)
+                            else:
+                                # Merge options if this pass discovered more choices
+                                for existing in form_fields_all:
+                                    if normalize_label(existing.get("label", "")) == nl:
+                                        old_opts = existing.get("options") or []
+                                        new_opts = f.get("options") or []
+                                        if len(new_opts) > len(old_opts):
+                                            existing["options"] = new_opts
+                                        break
                         form_scan_count += 1
+
+                        # If submit button is detected, we have reached the end of the form!
+                        has_submit = any(
+                            (f.get("type") == "button" or normalize_label(f.get("label", "")) in ["submit", "send", "next"])
+                            and not any(w in normalize_label(f.get("label", "")) for w in ["clear", "reset", "cancel"])
+                            for f in form_fields_all
+                        )
+                        if has_submit and form_scan_count < MAX_FORM_SCAN:
+                            task_log("Submit button detected in viewport; entire form is in view. Concluding scan.")
+                            form_scan_count = MAX_FORM_SCAN
 
                     if form_scan_count >= MAX_FORM_SCAN:
                         task_log(f"Scan complete ({form_scan_count} passes). Building fill plan...")
                         fill_plan = await asyncio.to_thread(build_form_fill_plan, form_fields_all)
                         if not fill_plan:
-                            warn("Form scan produced no auto-fillable (non-PII) fields.")
-                            task_log("Skipping PII/redacted fields. Task complete - user fills those.")
+                            warn("Form scan produced no auto-fillable fields.")
+                            task_log("No fillable fields found. Task complete.")
                             form_mode = False
+                            form_stage = "navigate"
+                            form_fields_all = []
+                            form_scan_count = 0
+                            form_scroll_down_count = 0
+                            prev_scan_hash = ""
                             task_queue.release_active(conn_id)
                             conn_manager.update(conn_id, status="idle", current_prompt="", current_request_id="", active_step=0, total_steps=0)
                             continue
 
-                        # If we scrolled down during scanning, prepend a scroll up to return to the top
-                        if form_scan_count > 1:
-                            fill_plan = ["scroll: up"] + fill_plan
+                        # If we scrolled down during scanning, prepend matching scroll up steps to return to top
+                        if form_scroll_down_count > 0:
+                            fill_plan = ["scroll: up"] * form_scroll_down_count + fill_plan
 
                         task_log(f"Form fill plan ({len(fill_plan)} steps):")
                         for i, s in enumerate(fill_plan):
@@ -873,21 +914,24 @@ async def websocket_endpoint(websocket: WebSocket):
                         retry_count = 0
                         last_confirmed_step = -1
                         form_stage = "fill"
-                        continue  # re-enter loop to execute first fill step
-
-                    # Scroll to reveal next viewport; the next screenshot will
-                    # be analyzed as the subsequent scan pass.
-                    task_log(f"Scrolling down for next scan pass...")
-                    await send_agent_action(
-                        websocket=websocket,
-                        request_id=active_request_id,
-                        tab_id=active_tab_id,
-                        step_index=current_step_index,
-                        is_last_step=False,
-                        inner_action={"action": "scroll", "direction": "down", "amount": 500,
-                                      "step_index": current_step_index, "is_last_step": False, "found": True},
-                    )
-                    continue
+                        # Fall through directly into lines below to execute Step 1
+                        # of the fill plan on last_screenshot immediately without
+                        # deadlocking on an expected client message.
+                    else:
+                        # Scroll to reveal next viewport; the next screenshot will
+                        # be analyzed as the subsequent scan pass.
+                        task_log(f"Scrolling down for next scan pass...")
+                        form_scroll_down_count += 1
+                        await send_agent_action(
+                            websocket=websocket,
+                            request_id=active_request_id,
+                            tab_id=active_tab_id,
+                            step_index=current_step_index,
+                            is_last_step=False,
+                            inner_action={"action": "scroll", "direction": "down", "amount": 500,
+                                          "step_index": current_step_index, "is_last_step": False, "found": True},
+                        )
+                        continue
 
                 if not taskPlan:
                     warn("Screenshot received but taskPlan is empty.")
@@ -895,6 +939,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 if current_step_index >= len(taskPlan):
                     ok("All planned steps executed successfully. Task complete.")
+                    form_mode = False
+                    form_stage = "navigate"
+                    form_fields_all = []
+                    form_scan_count = 0
+                    form_scroll_down_count = 0
+                    prev_scan_hash = ""
                     task_queue.release_active(conn_id)
                     conn_manager.update(conn_id, status="idle", current_prompt="", current_request_id="", active_step=0, total_steps=0)
                     continue
@@ -938,6 +988,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         last_confirmed_step = current_step_index - 1
                         if current_step_index >= len(taskPlan):
                             ok("Task ended after rethink. No more steps.")
+                            form_mode = False
+                            form_stage = "navigate"
+                            form_fields_all = []
+                            form_scan_count = 0
+                            form_scroll_down_count = 0
+                            prev_scan_hash = ""
                             task_queue.release_active(conn_id)
                             conn_manager.update(conn_id, status="idle", current_prompt="", current_request_id="", active_step=0, total_steps=0)
                         else:
@@ -953,14 +1009,25 @@ async def websocket_endpoint(websocket: WebSocket):
                         inner_action=inner_action,
                     )
 
+                except WebSocketDisconnect:
+                    raise
                 except Exception as err:
                     error(f"Error generating action: {err}")
                     traceback.print_exc()
-                    await websocket.send_text(json.dumps({
-                        "type": "ERROR",
-                        "request_id": active_request_id,
-                        "error": str(err),
-                    }))
+                    try:
+                        await websocket.send_text(json.dumps({
+                            "type": "ERROR",
+                            "request_id": active_request_id,
+                            "error": str(err),
+                        }))
+                    except Exception:
+                        pass
+                    form_mode = False
+                    form_stage = "navigate"
+                    form_fields_all = []
+                    form_scan_count = 0
+                    form_scroll_down_count = 0
+                    prev_scan_hash = ""
                     task_queue.release_active(conn_id)
                     conn_manager.update(conn_id, status="idle", current_prompt="", current_request_id="", active_step=0, total_steps=0)
 
@@ -981,6 +1048,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         ok(f"Step {step_idx + 1} executed successfully.")
                         if current_step_index >= len(taskPlan):
                             ok("All planned steps confirmed executed. Task complete.")
+                            form_mode = False
+                            form_stage = "navigate"
+                            form_fields_all = []
+                            form_scan_count = 0
+                            form_scroll_down_count = 0
+                            prev_scan_hash = ""
                             task_queue.release_active(conn_id)
                             conn_manager.update(conn_id, status="idle", current_prompt="", current_request_id="", active_step=0, total_steps=0)
                         else:
@@ -1000,6 +1073,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         last_confirmed_step = current_step_index - 1
                         if current_step_index >= len(taskPlan):
                             ok("Task ended after rethink. No more steps.")
+                            form_mode = False
+                            form_stage = "navigate"
+                            form_fields_all = []
+                            form_scan_count = 0
+                            form_scroll_down_count = 0
+                            prev_scan_hash = ""
                             task_queue.release_active(conn_id)
                             conn_manager.update(conn_id, status="idle", current_prompt="", current_request_id="", active_step=0, total_steps=0)
                         else:
@@ -1012,7 +1091,7 @@ async def websocket_endpoint(websocket: WebSocket):
         traceback.print_exc()
     finally:
         task_queue.remove_conn(conn_id)
-        conn_manager.disconnect(conn_id)
+        await conn_manager.disconnect(conn_id)
 
 
 def print_banner():

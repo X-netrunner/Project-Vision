@@ -21,6 +21,18 @@ else
     sleep 3
 fi
 
+echo "[*] Ensuring port 8001 is free..."
+if pgrep -f "main\.py" >/dev/null 2>&1; then
+    echo "[*] Stopping existing server instance..."
+    pkill -9 -f "main\.py" 2>/dev/null || true
+    sleep 1
+fi
+if fuser 8001/tcp >/dev/null 2>&1; then
+    echo "[*] Freeing port 8001..."
+    fuser -k 8001/tcp 2>/dev/null || true
+    sleep 1
+fi
+
 echo "[*] Starting server on port 8001..."
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 exec python3 main.py

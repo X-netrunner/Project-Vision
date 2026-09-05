@@ -166,7 +166,10 @@ def parse_box_center(output_text: str, width: int = 1920, height: int = 1080) ->
     # 5) Plain two-pair fallback
     pairs = re.findall(PAIR_RE, output_text)
     if len(pairs) == 1:
-        return float(pairs[0][0]), float(pairs[0][1])
+        px, py = float(pairs[0][0]), float(pairs[0][1])
+        if px <= 1.0 and py <= 1.0:
+            return px * width, py * height
+        return px, py
     if len(pairs) >= 2:
         (x1, y1), (x2, y2) = pairs[:2]
         return _xyxy_from_4tuple((x1, y1, x2, y2), width, height)
@@ -232,18 +235,11 @@ def _run_vlm_inference(image: Image.Image, prompt: str, max_new_tokens: int = 12
 
 
 def _smart_resize_dims(height: int, width: int) -> tuple[int, int]:
-    """Replicate Qwen2.5-VL's own image preprocessing resize exactly.
+    """Calculate Qwen2.5-VL internal patch preprocessing dimensions.
 
-    Before the model ever sees a screenshot, the processor's smart_resize()
-    shrinks (or grows) it so total pixels fall within [min_pixels, max_pixels]
-    and both dims are multiples of patch_size*merge_size - e.g. a 1920x1080
-    screenshot becomes roughly 1316x728 under the default ~1M pixel budget.
-    The model grounds bounding boxes in THAT resized frame, not the original
-    screenshot, so we must know it up front to build a correct prompt and to
-    scale the returned box back to real screenshot pixels afterward.
-    Returns (resized_width, resized_height); falls back to the original
-    dimensions (no-op scaling) if anything about the processor config is
-    unexpected, rather than raising.
+    NOTE: Qwen2.5-VL natively predicts bounding boxes in the user's original
+    input image coordinate space, so the model output must NOT be scaled by
+    (width / resized_w). This function is kept for diagnostic/logging purposes.
     """
     try:
         ip = processor.image_processor
@@ -384,7 +380,9 @@ def predict_action(
             target_desc = f"the '{opt_name}' option button (radio button or checkbox) next to '{opt_name}' under '{field_name}'"
         elif lower_target.startswith("input field for "):
             field_name = clean_text[len("input field for "):].strip().rstrip("*").strip()
-            target_desc = f"the blank text input box or entry field below '{field_name}'"
+            target_desc = f"the text input box or entry field below '{field_name}'"
+        elif "submit" in lower_target:
+            target_desc = "the 'Submit' button"
         elif "add to cart" in lower_target or "cart" in lower_target:
             target_desc = "the 'Add to Cart' or 'ADD TO CART' button"
         elif "search" in lower_target and ("bar" in lower_target or "input" in lower_target):
@@ -396,29 +394,20 @@ def predict_action(
         else:
             target_desc = f"'{clean_text}'"
 
-    # Short grounding instruction. Keep it minimal and imperative: the 3B model
-    # refuses to emit a box when the prompt is long or offers a "think step by
-    # step"/NOT_FOUND escape. Qwen2.5-VL is natively trained to answer with
-    # <|box_start|>(X1,Y1),(X2,Y2)<|box_end|>.
-    #
-    # IMPORTANT: we must NOT tell the model the screenshot's original WxH -
-    # Qwen2.5-VL's own preprocessor (smart_resize) shrinks any image over its
-    # ~1M pixel budget before the model ever looks at it (e.g. a 1920x1080
-    # shot becomes ~1316x728), and it grounds boxes in THAT resized frame.
-    # Prompt with the real resized dims, then scale the answer back.
-    resized_w, resized_h = _smart_resize_dims(height, width)
-    if (resized_w, resized_h) != (width, height):
-        print(f"[*] Screenshot is {width}x{height}; model will actually see {resized_w}x{resized_h} after internal resize.")
-
+    # Grounding instruction for Qwen2.5-VL.
+    # Qwen2.5-VL natively predicts bounding box coordinates in the original
+    # input image pixel space (width x height, top-left 0,0). Prompting with
+    # the true image dimensions ensures pixel-accurate grounding without any
+    # post-inference coordinate distortion.
     prompt = (
         f"{REDACTION_SYSTEM_INSTRUCTION_SHORT}\n"
         f"Locate {target_desc} in this screenshot.\n"
-        f"Reply with exactly the bounding box of that element in image pixel coordinates (image size {resized_w}x{resized_h}, top-left is 0,0):\n"
+        f"Reply with exactly the bounding box of that element in image pixel coordinates (image size {width}x{height}, top-left is 0,0):\n"
         f"<|box_start|>(X1,Y1),(X2,Y2)<|box_end|>\n"
         f"Output the box only."
     )
 
-    print(f"[*] VLM querying for target: {target_desc}")
+    print(f"[*] VLM querying for target: {target_desc} on image ({width}x{height})")
     try:
         output_text = _run_vlm_inference(img, prompt)
     except (torch.AcceleratorError, RuntimeError) as vlm_err:
@@ -427,17 +416,14 @@ def predict_action(
     print(f"[*] VLM raw output: {output_text.strip()[:300]}")
 
     found = False
-    box_center = parse_box_center(output_text, resized_w, resized_h)
+    box_center = parse_box_center(output_text, width, height)
     if box_center:
-        # box_center is in the RESIZED frame the model actually looked at -
-        # scale it into the original screenshot's pixel space before anything
-        # downstream (DPR division, clamping) touches it.
-        raw_x_px, raw_y_px = box_center
-        scale_x = width / resized_w if resized_w else 1.0
-        scale_y = height / resized_h if resized_h else 1.0
-        center_x_px, center_y_px = raw_x_px * scale_x, raw_y_px * scale_y
+        center_x_px, center_y_px = box_center
+        # Constrain coordinates within screenshot bounds
+        center_x_px = max(0.0, min(float(center_x_px), float(width - 1)))
+        center_y_px = max(0.0, min(float(center_y_px), float(height - 1)))
         found = True
-        print(f"[*] VLM box center -> resized-frame ({raw_x_px:.1f},{raw_y_px:.1f}) -> screenshot pixel ({center_x_px:.1f},{center_y_px:.1f})")
+        print(f"[*] VLM box center -> screenshot pixel ({center_x_px:.1f},{center_y_px:.1f})")
     else:
         center_x_px, center_y_px = width / 2.0, height / 2.0
         print(f"[!] VLM output not parsed as box: {output_text[:200]}")
@@ -479,20 +465,60 @@ def predict_action(
     return action_payload
 
 
+IGNORABLE_LABELS = {
+    "indicates required question",
+    "your answer",
+    "clear form",
+    "sign in to google to save your progress",
+    "never submit passwords through google forms",
+    "switch accounts",
+    "report abuse",
+    "terms of service",
+    "privacy policy",
+}
+
+
+def normalize_label(label: str) -> str:
+    """Normalize label by removing asterisks, quotes, excess whitespace, and lowercasing."""
+    cleaned = re.sub(r'[\*\"\'\:\-]+', ' ', label or '')
+    return ' '.join(cleaned.lower().split())
+
+
+def is_ignorable_form_element(label: str, ftype: str = "") -> bool:
+    """Check if an element is boilerplate, placeholder, or reset button that shouldn't be filled."""
+    norm = normalize_label(label)
+    if not norm:
+        return True
+    if norm in IGNORABLE_LABELS:
+        return True
+    if any(phrase in norm for phrase in [
+        "indicates required",
+        "required question",
+        "save your progress",
+        "never submit password",
+        "clear form",
+        "switch account",
+    ]):
+        return True
+    if norm.startswith("your answer") or norm == "answer":
+        return True
+    return False
+
+
 FORM_ANALYSIS_PROMPT = (
-    "This is a web form. Identify EVERY fillable field visible on the screen.\n"
-    "For each field output:\n"
-    "- type: \"text\" (for text inputs, email, name, search), \"radio\" (for round radio choice buttons), or \"checkbox\" (for square check boxes)\n"
-    "- label: the visible question title, label, or placeholder next to the field\n"
-    "- box: the field's bounding box as [X1,Y1,X2,Y2] normalized to 0-1000 (top-left then bottom-right)\n"
-    "- options: array of option labels for choice fields (e.g. [\"Option 1\"] or [\"true\", \"false\"]). For text fields use []\n"
-    "- pii: true if the field asks for personal data (name, email, phone, password, address) OR if its input/label is blurred/masked. Otherwise false.\n"
+    "Analyze this web form screenshot and identify every fillable question/field and action button.\n"
+    "For each element provide:\n"
+    "- label: the visible question title or button text (e.g. 'pick true', 'name', 'Submit'). DO NOT include placeholders like 'Your answer' or instructions like '* Indicates required question'.\n"
+    "- type: 'radio' (for round option buttons), 'checkbox' (for square check boxes), 'text' (for single-line or multi-line text input fields), or 'button' (for 'Submit' / 'Next' buttons).\n"
+    "- options: list of text choices for radio/checkbox questions (e.g. ['true', 'false'] or ['Option 1']). Use [] for text inputs and buttons.\n"
     "Rules:\n"
-    "- If a field has visible choices/options, classify type as \"radio\" or \"checkbox\" and list all options in the options array.\n"
-    "- If a field is blurred, blacked-out, or asks for name/email/phone, set pii: true.\n"
-    "Output ONLY a JSON object, no commentary:\n"
-    '{"fields":[{"type":"text|radio|checkbox","label":"<label>","box":[x1,y1,x2,y2],"options":["opt1"],"pii":true_or_false}]}\n'
-    'If there are no fillable fields, output {"fields":[]}.'
+    "- Ignore headers, page titles, disclaimers, and metadata like '* Indicates required question' or 'Sign in to Google'.\n"
+    "- Ignore placeholder text inside input boxes like 'Your answer'. Use the question title above the box as the label.\n"
+    "- Ignore 'Clear form' or cancel buttons.\n"
+    "- Identify 'Submit' as type 'button'.\n"
+    "Output ONLY a JSON object with a 'fields' list, no commentary:\n"
+    '{"fields":[{"label":"question title","type":"text|radio|checkbox|button","options":["opt1"]}]}\n'
+    'If there are no fields, output {"fields":[]}.'
 )
 
 
@@ -528,30 +554,25 @@ def _extract_fields_from_json(output_text: str) -> list[dict]:
             except Exception:
                 continue
 
-    PII_KEYWORDS = ["name", "email", "phone", "mobile", "password", "address", "ssn", "dob", "birth", "credit"]
-
     fields: list[dict] = []
     for f in raw_list:
         if not isinstance(f, dict):
             continue
         label = str(f.get("label", "")).strip()
         ftype = str(f.get("type", "text")).lower()
+        if is_ignorable_form_element(label, ftype):
+            continue
+
         opts = f.get("options") or []
         if isinstance(opts, str):
             opts = [o.strip().strip("\"'") for o in opts.split(",") if o.strip()]
 
         # Correct field type if options exist
         if opts and ftype == "text":
-            ftype = "checkbox" if any(w in label.lower() for w in ["tick", "check", "multi"]) else "radio"
+            norm = normalize_label(label)
+            ftype = "checkbox" if any(w in norm for w in ["tick", "check", "multi"]) else "radio"
 
-        pii = bool(f.get("pii", False))
-        # Privacy defense-in-depth: if label asks for PII keywords, enforce pii=True
-        cleaned_lbl = re.sub(r"[\*\"\'\:\-]+", " ", label).strip().lower()
-        words = cleaned_lbl.split()
-        if any(k in words or k == cleaned_lbl for k in PII_KEYWORDS):
-            pii = True
-
-        field = {"type": ftype, "label": label, "pii": pii, "options": opts}
+        field = {"type": ftype, "label": label, "options": opts}
         if "box" in f and len(f["box"]) == 4:
             try:
                 x1, y1, x2, y2 = map(float, f["box"])
@@ -567,7 +588,7 @@ def _extract_fields_from_json(output_text: str) -> list[dict]:
 def analyze_form(base64_image: str) -> list[dict]:
     """Ask the VLM to enumerate the form's fields.
 
-    Returns a list of dicts: {type, label, pii, options, box?, center?}.
+    Returns a list of dicts: {type, label, options, box?, center?}.
     """
     try:
         img = decode_base64_image(base64_image)
@@ -584,12 +605,12 @@ def analyze_form(base64_image: str) -> list[dict]:
     print(f"[*] FORM analysis raw: {output.strip()[:600]}")
     fields = _extract_fields_from_json(output)
     print(f"[*] FORM inferred {len(fields)} field(s): "
-          f"{json.dumps([{ 'label': f['label'], 'type': f['type'], 'pii': f['pii'] } for f in fields])}")
+          f"{json.dumps([{ 'label': f['label'], 'type': f['type'] } for f in fields])}")
     return fields
 
 
 def generate_form_value(label: str) -> str:
-    """Return a realistic test value for a NON-PII field given its label."""
+    """Return a realistic test value for a form field given its label."""
     L = (label or "").lower()
 
     # 1. Check if the label explicitly tells the user what to type (e.g. just type "yes")
@@ -601,38 +622,60 @@ def generate_form_value(label: str) -> str:
     if m_quoted and any(w in L for w in ["type", "enter", "write", "say", "just"]):
         return m_quoted.group(1)
 
-    if any(k in L for k in ["subject", "query", "search", "keyword", "topic"]):
-        return "Project Vision automation test"
-    if any(k in L for k in ["name"]):
+    # 2. Check unquoted instruction like "just type yes"
+    m_unquoted = re.search(r'(?:just\s+)?(?:type|enter|write|input)\s+([a-zA-Z0-9_-]+)', label, re.IGNORECASE)
+    if m_unquoted:
+        word = m_unquoted.group(1).strip()
+        if word.lower() not in ["the", "a", "an", "your", "here", "this"]:
+            return word
+
+    if any(k in L for k in ["email", "e-mail", "mail"]):
+        return "john.doe@example.com"
+    if any(k in L for k in ["full name", "first name", "last name", "name"]):
         return "John Doe"
-    if any(k in L for k in ["city"]):
+    if any(k in L for k in ["phone", "mobile", "contact number", "cell"]):
+        return "9876501234"
+    if any(k in L for k in ["city", "town"]):
         return "Mumbai"
-    if any(k in L for k in ["country"]):
+    if any(k in L for k in ["state", "province"]):
+        return "Maharashtra"
+    if any(k in L for k in ["country", "nation"]):
         return "India"
-    if any(k in L for k in ["comment", "message", "feedback", "note", "description"]):
-        return "This is an automated test submission from Project Vision."
+    if any(k in L for k in ["zip", "postal", "pincode", "pin code"]):
+        return "400001"
     if any(k in L for k in ["age"]):
         return "25"
-    if any(k in L for k in ["email"]):
-        return "john.doe@example.com"
-    if any(k in L for k in ["phone", "mobile"]):
-        return "9876501234"
+    if any(k in L for k in ["subject", "query", "search", "keyword", "topic", "title"]):
+        return "Project Vision automation test"
+    if any(k in L for k in ["comment", "message", "feedback", "note", "description", "details", "reason", "suggestion"]):
+        return "This is an automated test submission from Project Vision."
+    if any(k in L for k in ["url", "website", "link"]):
+        return "https://example.com"
+    if any(k in L for k in ["company", "organization", "org"]):
+        return "Project Vision Team"
+    if any(k in L for k in ["job", "designation", "role", "title"]):
+        return "Engineer"
     return "Test Value"
 
 
 def build_form_fill_plan(form_fields: list[dict]) -> list[str]:
-    """Turn detected fields into click+type/click step strings for NON-PII fields only.
+    """Turn detected fields into click+type/click step strings.
 
-    PII/redacted fields are intentionally skipped (the human types those).
-    Radio/checkbox fields get a click on the first available option.
+    Radio/checkbox fields get a click on the requested or first available option.
+    Text fields get a click on the input box followed by typing a realistic test value.
+    Submit button is appended as the final step.
     """
     steps: list[str] = []
+    submit_step = None
+
     for i, f in enumerate(form_fields, start=1):
         raw_label = (f.get("label") or f"field {i}").strip()
         clean_lbl = raw_label.rstrip("*").strip()
+        norm = normalize_label(clean_lbl)
 
-        if f.get("pii"):
-            print(f"[*] Skipping PII/redacted field ({i}): {raw_label}")
+        # Ignore boilerplate disclaimers and orphaned placeholders
+        if is_ignorable_form_element(clean_lbl, f.get("type", "")):
+            print(f"[*] Skipping non-field element ({i}): {raw_label}")
             continue
 
         ftype = (f.get("type") or "text").lower()
@@ -640,21 +683,38 @@ def build_form_fill_plan(form_fields: list[dict]) -> list[str]:
 
         # Auto-correct type if options exist
         if opts and ftype == "text":
-            ftype = "checkbox" if any(w in clean_lbl.lower() for w in ["tick", "check", "multi"]) else "radio"
+            ftype = "checkbox" if any(w in norm for w in ["tick", "check", "multi"]) else "radio"
 
+        # Handle Submit / action buttons
+        if ftype == "button" or norm in ["submit", "send", "next"]:
+            if any(w in norm for w in ["clear", "reset", "cancel"]):
+                print(f"[*] Skipping clear/reset button: {raw_label}")
+                continue
+            submit_step = f"click: {clean_lbl}"
+            continue
+
+        # Choice fields: radio / checkbox
         if ftype in ("radio", "checkbox"):
-            # For radio/checkbox, click the first option (e.g., "Yes" or "True")
             if opts:
-                option_label = opts[0]
-                steps.append(f"click: {clean_lbl} - {option_label}")
+                # Prefer option mentioned in question label (e.g. "pick true" -> "true")
+                matched_opt = None
+                for opt in opts:
+                    if opt.lower() in norm:
+                        matched_opt = opt
+                        break
+                selected_opt = matched_opt or opts[0]
+                steps.append(f"click: {clean_lbl} - {selected_opt}")
             else:
                 steps.append(f"click: {clean_lbl}")
         else:
-            # Text/textarea: click the input box then type
-            value = generate_form_value(clean_lbl)
+            # Text / textarea field: click input box then type
+            val = generate_form_value(clean_lbl)
             steps.append(f"click: input field for {clean_lbl}")
-            steps.append(f"type: {value}")
+            steps.append(f"type: {val}")
+
+    if submit_step:
+        steps.append(submit_step)
 
     if not steps:
-        print(f"[*] All {len(form_fields)} form fields are PII/redacted; nothing to auto-fill.")
+        print(f"[*] Form scan produced no fillable fields.")
     return steps
